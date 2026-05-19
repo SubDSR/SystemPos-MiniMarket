@@ -110,9 +110,17 @@ class VentasView(tk.Frame):
         prod_entry = tk.Entry(panel, textvariable=self._prod_search_var,
                               font=FONT_BODY, width=28, relief="solid", bd=1)
         prod_entry.pack(side="left", padx=(0, 4))
+        self._prod_entry = prod_entry
+        self._prod_entry.bind("<FocusOut>", self._on_prod_entry_focus_out)
 
-        # Listbox de sugerencias de productos
-        self._suggest_frame = tk.Frame(self, bg="white", relief="solid", bd=1)
+        # Popup de sugerencias para evitar que el Treeview tape la lista.
+        self._suggest_popup = tk.Toplevel(self)
+        self._suggest_popup.withdraw()
+        self._suggest_popup.overrideredirect(True)
+        self._suggest_popup.transient(self.winfo_toplevel())
+
+        self._suggest_frame = tk.Frame(self._suggest_popup, bg="white", relief="solid", bd=1)
+        self._suggest_frame.pack(fill="both", expand=True)
         self._suggest_list  = tk.Listbox(
             self._suggest_frame, font=FONT_BODY, height=5,
             bg="white", selectbackground="#dbeafe",
@@ -120,10 +128,15 @@ class VentasView(tk.Frame):
         )
         self._suggest_list.pack(fill="both", expand=True)
         self._suggest_list.bind("<<ListboxSelect>>", self._on_suggest_select)
+        self._suggest_list.bind("<FocusOut>", self._on_suggest_list_focus_out)
+
+        self.bind("<Configure>", self._on_view_configure)
+        self.bind("<Destroy>", self._on_view_destroy)
 
         self._prod_selected_id: Optional[int] = None
         self._prod_selected_nom = tk.StringVar(value="")
         self._prod_selected_pre = tk.StringVar(value="")
+        self._setting_prod_from_suggest = False
 
         tk.Label(panel, textvariable=self._prod_selected_nom, font=FONT_SMALL,
                  bg=C_CARD_BG, fg=C_ACCENT).pack(side="left", padx=8)
@@ -287,28 +300,30 @@ class VentasView(tk.Frame):
 
     def _on_prod_search(self, *_) -> None:
         term = self._prod_search_var.get().strip()
+
+        if self._setting_prod_from_suggest:
+            self._setting_prod_from_suggest = False
+            self._hide_suggestions()
+            return
+
         self._suggest_list.delete(0, "end")
         self._prod_selected_id = None
         self._prod_selected_nom.set("")
 
         if len(term) < 2:
-            self._suggest_frame.place_forget()
+            self._hide_suggestions()
             return
 
         productos = self._prod_svc.buscar(term)[:8]
         if not productos:
-            self._suggest_frame.place_forget()
+            self._hide_suggestions()
             return
 
         for p in productos:
             self._suggest_list.insert("end",
                 f"[{p.id}] {p.nombre} — S/ {p.precio:.2f}  (stock: {p.stock})")
 
-        # Posicionar el listbox bajo el entry
-        widget = self._prod_search_var
-        x = 16 + 20 + 70  # aprox posición x del entry
-        y = 16 + 12 + 52 + 12 + 46  # aprox posición y
-        self._suggest_frame.place(x=x, y=y, width=380)
+        self._show_suggestions()
 
     def _on_suggest_select(self, _=None) -> None:
         sel = self._suggest_list.curselection()
@@ -322,8 +337,9 @@ class VentasView(tk.Frame):
             self._prod_selected_id = p.id
             self._prod_selected_nom.set(f"✓ {p.nombre}")
             self._prod_selected_pre.set(f"S/ {p.precio:.2f}")
+            self._setting_prod_from_suggest = True
             self._prod_search_var.set(p.nombre)
-            self._suggest_frame.place_forget()
+            self._hide_suggestions()
 
     def _agregar_al_carrito(self) -> None:
         if not self._prod_selected_id:
@@ -472,6 +488,8 @@ class VentasView(tk.Frame):
         self._refresh_cart()
         self._clear_client()
         self._prod_search_var.set("")
+        self._hide_suggestions()
+        self._setting_prod_from_suggest = False
         self._prod_selected_id = None
         self._prod_selected_nom.set("")
         self._cant_var.set("1")
@@ -480,3 +498,44 @@ class VentasView(tk.Frame):
     def _show_msg(self, msg: str, color: str = C_ERROR) -> None:
         self._msg_var.set(msg)
         self._ctrl.set_status(msg, color)
+
+    def _show_suggestions(self) -> None:
+        self._position_suggestions()
+        self._suggest_popup.deiconify()
+        self._suggest_popup.lift()
+
+    def _hide_suggestions(self) -> None:
+        if self._suggest_popup.winfo_exists():
+            self._suggest_popup.withdraw()
+
+    def _position_suggestions(self) -> None:
+        if not self._suggest_popup.winfo_exists() or not self._prod_entry.winfo_exists():
+            return
+
+        self.update_idletasks()
+        x = self._prod_entry.winfo_rootx()
+        y = self._prod_entry.winfo_rooty() + self._prod_entry.winfo_height()
+        width = self._prod_entry.winfo_width() + 180
+        height = min(5, max(self._suggest_list.size(), 1)) * 28 + 4
+        self._suggest_popup.geometry(f"{width}x{height}+{x}+{y}")
+
+    def _on_view_configure(self, _event=None) -> None:
+        if self._suggest_popup.winfo_exists() and self._suggest_popup.winfo_viewable():
+            self._position_suggestions()
+
+    def _on_prod_entry_focus_out(self, _event=None) -> None:
+        self.after(120, self._hide_suggestions_if_needed)
+
+    def _on_suggest_list_focus_out(self, _event=None) -> None:
+        self.after(120, self._hide_suggestions_if_needed)
+
+    def _hide_suggestions_if_needed(self) -> None:
+        focus_widget = self.focus_get()
+        if focus_widget not in (self._prod_entry, self._suggest_list):
+            self._hide_suggestions()
+
+    def _on_view_destroy(self, event=None) -> None:
+        if event is not None and event.widget is not self:
+            return
+        if hasattr(self, "_suggest_popup") and self._suggest_popup.winfo_exists():
+            self._suggest_popup.destroy()
