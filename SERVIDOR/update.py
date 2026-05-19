@@ -31,8 +31,16 @@ from pathlib import Path
 from typing import Callable, Optional
 
 # ── Resolver ruta base del proyecto ──────────────────────────────────────────
-SERVIDOR_DIR = Path(__file__).resolve().parent
-BASE_DIR     = SERVIDOR_DIR.parent
+# sys.frozen es verdadero cuando se ejecuta como Update.exe compilado con
+# PyInstaller --onefile.  En ese caso __file__ apunta al directorio temporal
+# de extracción (sys._MEIPASS), no al proyecto.  Usamos sys.executable que
+# siempre apunta al .exe real en dist/.
+if getattr(sys, "frozen", False):
+    BASE_DIR     = Path(sys.executable).resolve().parent.parent
+    SERVIDOR_DIR = BASE_DIR / "SERVIDOR"
+else:
+    SERVIDOR_DIR = Path(__file__).resolve().parent
+    BASE_DIR     = SERVIDOR_DIR.parent
 APP_DIR      = BASE_DIR / "APPLICATION"
 DATOS_DIR    = BASE_DIR / "DATOS"
 DB_DIR       = SERVIDOR_DIR / "database"

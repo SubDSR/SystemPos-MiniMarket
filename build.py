@@ -20,10 +20,17 @@ Los ejecutables se generan en:
     dist/Send.exe
     dist/Update.exe
 """
+import io
 import subprocess
 import sys
 import shutil
 from pathlib import Path
+
+# Forzar UTF-8 en la consola de Windows (evita UnicodeEncodeError en cp1252)
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+else:
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
 APP_DIR  = BASE_DIR / "APPLICATION"
@@ -100,12 +107,12 @@ def build_pos() -> bool:
 
 def build_send() -> bool:
     """
-    Compila Send.exe — Agente de sincronización cliente→servidor.
+    Compila Send.exe — Agente de sincronizacion cliente-servidor.
 
     Send.exe:
       - Lee datos de APPLICATION/DATA/
       - Exporta a APPLICATION/exports/
-      - Copia los CSV a \\HOSTNAME\DATOS (ruta UNC) o DATOS/ (fallback)
+      - Copia los CSV a la ruta UNC o DATOS/ (fallback)
     """
     return run_pyinstaller(
         script      = APP_DIR / "send.py",
@@ -120,7 +127,7 @@ def build_update() -> bool:
     Compila Update.exe — Procesador de archivos del servidor.
 
     Update.exe:
-      - Monitorea la carpeta DATOS/ (UNC: \\HOSTNAME\DATOS)
+      - Monitorea la carpeta DATOS/ (UNC o fallback local)
       - Lee los CSV recibidos de los clientes
       - Los inserta en la base de datos SQLite del servidor
     """

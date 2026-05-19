@@ -1,0 +1,9 @@
+MANIFEST DE SINCRONIZACIÓN
+Fecha:    2026-05-19 01:09:42.724546
+Origen:   David
+Archivos: 4
+----------------------------------------
+  productos_20260519_010942.csv  (1057 bytes)
+  clientes_20260519_010942.csv  (673 bytes)
+  ventas_20260519_010942.csv  (2196 bytes)
+  detalles_20260519_010942.csv  (4238 bytes)

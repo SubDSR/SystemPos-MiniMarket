@@ -20,8 +20,14 @@ from pathlib import Path
 import threading
 
 # ── Rutas ─────────────────────────────────────────────────────────────────────
-SERVIDOR_DIR = Path(__file__).resolve().parent
-BASE_DIR     = SERVIDOR_DIR.parent
+# Igual que update.py: cuando se compila como Server.exe, __file__ apunta al
+# directorio temporal de PyInstaller.  Usamos sys.executable en su lugar.
+if getattr(sys, "frozen", False):
+    BASE_DIR     = Path(sys.executable).resolve().parent.parent
+    SERVIDOR_DIR = BASE_DIR / "SERVIDOR"
+else:
+    SERVIDOR_DIR = Path(__file__).resolve().parent
+    BASE_DIR     = SERVIDOR_DIR.parent
 DATOS_DIR    = BASE_DIR / "DATOS"
 DB_DIR       = SERVIDOR_DIR / "database"
 SERVER_DB    = DB_DIR / "minimarket.db"

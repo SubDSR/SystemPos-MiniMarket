@@ -2,19 +2,29 @@
 config.py — Configuración central del Sistema POS MiniMarket.
 Define todas las rutas absolutas, constantes de negocio y parámetros de UI.
 
-Jerarquía de directorios resuelta dinámicamente desde la ubicación de este archivo:
-    BASE_DIR/APPLICATION/utils/config.py
-        → .parent          = BASE_DIR/APPLICATION/utils
-        → .parent.parent   = BASE_DIR/APPLICATION
-        → .parent.parent.parent = BASE_DIR   ← raíz del proyecto
+Resolución de BASE_DIR:
+  Desarrollo  (python main.py):   __file__ sube 3 niveles desde APPLICATION/utils/
+  Compilado   (MiniMarketPOS.exe / Send.exe):
+      PyInstaller --onefile extrae los módulos a un directorio temporal
+      (sys._MEIPASS).  __file__ apuntaría al temp dir y rompería todas las
+      rutas.  En cambio usamos sys.executable, que siempre apunta al .exe
+      real en dist/.  El proyecto está un nivel por encima de dist/, por lo
+      que subir un nivel desde el directorio del .exe da la raíz correcta.
 """
+import sys
 import socket
 from pathlib import Path
 
 # ════════════════════════════════════════════════════════════════════════════
 # RUTAS BASE
 # ════════════════════════════════════════════════════════════════════════════
-BASE_DIR: Path      = Path(__file__).resolve().parent.parent.parent
+if getattr(sys, "frozen", False):
+    # Ejecutable compilado: sys.executable = dist/MiniMarketPOS.exe (o Send.exe)
+    # La raíz del proyecto está un nivel por encima de dist/
+    BASE_DIR: Path = Path(sys.executable).resolve().parent.parent
+else:
+    # Desarrollo: este archivo está en APPLICATION/utils/config.py
+    BASE_DIR: Path = Path(__file__).resolve().parent.parent.parent
 
 APP_DIR: Path       = BASE_DIR / "APPLICATION"
 DATA_DIR: Path      = BASE_DIR / "DATA"       # archivos .dat, .idx, .holes

@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python seed.py)",
+      "Bash(python -X utf8 seed.py)",
+      "Bash(python -X utf8 seed.py --reset)",
+      "Bash(python -X utf8 verify.py --dump 2)",
+      "Bash(python -X utf8 seed.py --status)",
+      "Bash(python -c ' *)",
+      "Bash(python -X utf8 verify.py)",
+      "Bash(python build.py --only pos)",
+      "Bash(python -X utf8 build.py --only pos)",
+      "Bash(.\\\\MiniMarketPOS.exe --help)",
+      "Bash(python *)"
+    ]
+  }
+}
