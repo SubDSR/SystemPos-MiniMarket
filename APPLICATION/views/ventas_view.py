@@ -264,8 +264,9 @@ class VentasView(tk.Frame):
     # ════════════════════════════════════════════════════════════════════════
 
     def on_show(self) -> None:
-        """Refresca lista de productos al entrar a esta vista."""
-        pass  # Los productos se cargan on-demand en la búsqueda
+        # Recargar índices para ver productos y clientes creados en otras vistas
+        self._prod_svc._fm.index_manager.reload()
+        self._cli_svc._fm.index_manager.reload()
 
     def _buscar_cliente(self) -> None:
         dni = self._dni_var.get().strip()

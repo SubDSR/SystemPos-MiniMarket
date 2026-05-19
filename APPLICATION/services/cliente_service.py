@@ -2,6 +2,7 @@
 cliente_service.py — Servicio CRUD para clientes.
 Toda persistencia se delega al FileManager (struct + seek()).
 """
+import csv
 from typing import List, Optional
 
 from models.cliente import Cliente
@@ -111,9 +112,11 @@ class ClienteService:
     def exportar_csv(self, export_path) -> int:
         """Exporta todos los clientes activos a CSV para sincronización."""
         clientes = self.listar()
-        with open(export_path, "w", encoding="utf-8") as f:
-            f.write("id,nombre,dni,telefono,email,estado\n")
+        with open(export_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "nombre", "dni", "telefono", "email", "estado"])
             for c in clientes:
-                f.write(c.to_csv_row() + "\n")
+                writer.writerow([c.id, c.nombre, c.dni,
+                                  c.telefono, c.email, c.estado])
         logger.info(f"Exportados {len(clientes)} clientes a {export_path}")
         return len(clientes)

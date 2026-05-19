@@ -2,6 +2,7 @@
 producto_service.py — Servicio CRUD para productos.
 Toda persistencia se delega al FileManager (struct + seek()).
 """
+import csv
 from typing import List, Optional
 
 from models.producto import Producto
@@ -139,9 +140,11 @@ class ProductoService:
     def exportar_csv(self, export_path) -> int:
         """Exporta todos los productos activos a CSV para sincronización."""
         productos = self.listar()
-        with open(export_path, "w", encoding="utf-8") as f:
-            f.write("id,nombre,precio,stock,categoria,estado\n")
+        with open(export_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "nombre", "precio", "stock", "categoria", "estado"])
             for p in productos:
-                f.write(p.to_csv_row() + "\n")
+                writer.writerow([p.id, p.nombre, f"{p.precio:.2f}",
+                                  p.stock, p.categoria, p.estado])
         logger.info(f"Exportados {len(productos)} productos a {export_path}")
         return len(productos)

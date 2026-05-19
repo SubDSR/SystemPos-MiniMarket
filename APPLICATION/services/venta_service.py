@@ -6,6 +6,7 @@ Coordina tres archivos binarios:
   - detalles.dat / detalles.idx  → líneas de producto por venta
   - productos.dat / productos.idx → actualización de stock
 """
+import csv
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -200,19 +201,27 @@ class VentaService:
     def exportar_ventas_csv(self, export_path) -> int:
         """Exporta ventas a CSV para sincronización con el servidor."""
         ventas = self.listar_ventas()
-        with open(export_path, "w", encoding="utf-8") as f:
-            f.write("id,cliente_id,fecha,subtotal,igv,total,estado\n")
+        with open(export_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "cliente_id", "fecha",
+                              "subtotal", "igv", "total", "estado"])
             for v in ventas:
-                f.write(v.to_csv_row() + "\n")
+                writer.writerow([v.id, v.cliente_id, v.fecha,
+                                  f"{v.subtotal:.2f}", f"{v.igv:.2f}",
+                                  f"{v.total:.2f}", v.estado])
         logger.info(f"Exportadas {len(ventas)} ventas a {export_path}")
         return len(ventas)
 
     def exportar_detalles_csv(self, export_path) -> int:
         """Exporta detalles de venta a CSV para sincronización."""
         detalles = self.listar_detalles()
-        with open(export_path, "w", encoding="utf-8") as f:
-            f.write("id,venta_id,producto_id,cantidad,precio_unitario,subtotal,estado\n")
+        with open(export_path, "w", encoding="utf-8", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["id", "venta_id", "producto_id", "cantidad",
+                              "precio_unitario", "subtotal", "estado"])
             for d in detalles:
-                f.write(d.to_csv_row() + "\n")
+                writer.writerow([d.id, d.venta_id, d.producto_id,
+                                  d.cantidad, f"{d.precio_unitario:.2f}",
+                                  f"{d.subtotal:.2f}", d.estado])
         logger.info(f"Exportados {len(detalles)} detalles a {export_path}")
         return len(detalles)

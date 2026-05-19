@@ -157,6 +157,9 @@ class HistorialView(tk.Frame):
         dsb.grid(row=0, column=1, sticky="ns")
 
     def on_show(self) -> None:
+        # Recargar índices desde disco para ver ventas creadas en otras vistas
+        self._svc._venta_fm.index_manager.reload()
+        self._svc._detalle_fm.index_manager.reload()
         self._load_table()
 
     def _load_table(self) -> None:
