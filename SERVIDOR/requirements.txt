@@ -1,0 +1,6 @@
+# SERVIDOR — Dependencias
+# sqlite3 es parte de la biblioteca estándar de Python.
+# No se requieren paquetes externos para el servidor.
+
+# Para compilar a .EXE:
+pyinstaller>=5.0

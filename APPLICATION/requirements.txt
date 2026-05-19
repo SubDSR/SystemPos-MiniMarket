@@ -1,0 +1,14 @@
+# APPLICATION — Dependencias del cliente POS
+# Todos los módulos usados son de la biblioteca estándar de Python 3:
+#   - tkinter   (interfaz gráfica)
+#   - struct    (serialización binaria de longitud fija)
+#   - pathlib   (manejo de rutas)
+#   - shutil    (copia de archivos UNC)
+#   - logging   (registro de operaciones)
+#   - threading (sincronización asíncrona)
+#   - csv       (exportación para sincronización)
+#   - socket    (obtener hostname para ruta UNC)
+
+# No se requieren paquetes de terceros para el funcionamiento base.
+# Para compilar a .EXE:
+pyinstaller>=5.0
