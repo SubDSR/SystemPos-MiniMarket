@@ -30,7 +30,18 @@ public class ServerApp extends JFrame {
         if (home != null && !home.isBlank()) {
             base = Path.of(home).toAbsolutePath();
         } else {
-            base = Path.of(System.getProperty("user.dir")).toAbsolutePath().getParent();
+            Path cwd    = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+            String name = cwd.getFileName() != null ? cwd.getFileName().toString() : "";
+            if (name.equalsIgnoreCase("SERVIDOR")) {
+                base = cwd.getParent();
+            } else if (name.equalsIgnoreCase("dist") && cwd.getParent() != null
+                    && cwd.getParent().getFileName() != null
+                    && cwd.getParent().getFileName().toString().equalsIgnoreCase("SERVIDOR")) {
+                base = cwd.getParent().getParent();
+            } else {
+                // Asumir que CWD es la raíz del proyecto
+                base = cwd;
+            }
         }
         BASE_DIR     = base;
         SERVIDOR_DIR = base.resolve("SERVIDOR");

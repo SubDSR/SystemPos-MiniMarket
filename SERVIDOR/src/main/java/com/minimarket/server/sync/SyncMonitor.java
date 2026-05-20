@@ -34,7 +34,6 @@ public class SyncMonitor {
 
     private final DatabaseManager dbManager;
     private final Path            datosDir;
-    private final Path            processedFile;
     private final int             intervalSeconds;
 
     private Consumer<String> logCallback;
@@ -48,7 +47,6 @@ public class SyncMonitor {
         this.dbManager      = dbManager;
         this.datosDir       = datosDir;
         this.intervalSeconds = intervalSeconds;
-        this.processedFile  = serverDir.resolve("processed_files.txt");
         this.logCallback    = LOG::info;
         this.statusCallback = s -> { };
     }
@@ -110,27 +108,32 @@ public class SyncMonitor {
             return 0;
         }
 
-        Set<String> processed = getProcessedSet();
-        List<Path>  csvFiles;
+        List<Path> allFiles;
         try (java.util.stream.Stream<Path> stream = Files.list(datosDir)) {
-            csvFiles = stream
-                .filter(p -> p.toString().toLowerCase().endsWith(".csv"))
-                .sorted()
-                .toList();
+            allFiles = stream.sorted().toList();
         } catch (IOException e) {
             log("[ERROR] Leyendo carpeta: " + e.getMessage());
             return 0;
         }
 
-        List<Path> newFiles = csvFiles.stream()
-            .filter(f -> !processed.contains(f.getFileName().toString()))
+        List<Path> csvFiles = allFiles.stream()
+            .filter(p -> p.toString().toLowerCase().endsWith(".csv"))
+            .toList();
+        List<Path> manifests = allFiles.stream()
+            .filter(p -> p.getFileName().toString().toUpperCase().startsWith("MANIFEST"))
             .toList();
 
-        if (newFiles.isEmpty()) return 0;
+        // Borrar manifests — ya cumplieron su función
+        for (Path m : manifests) {
+            try { Files.deleteIfExists(m); }
+            catch (IOException ignored) { }
+        }
 
-        log("Encontrados " + newFiles.size() + " archivo(s) nuevo(s)");
+        if (csvFiles.isEmpty()) return 0;
+
+        log("Encontrados " + csvFiles.size() + " CSV(s) para procesar");
         int okCount = 0;
-        for (Path fp : newFiles) {
+        for (Path fp : csvFiles) {
             if (processCsvFile(fp)) {
                 okCount++;
                 statusCallback.accept("Procesado: " + fp.getFileName());
@@ -161,7 +164,7 @@ public class SyncMonitor {
 
         if (rows.isEmpty()) {
             log("[SKIP] " + filename + " sin registros");
-            markProcessed(filename);
+            deleteFile(filepath);
             return true;
         }
 
@@ -176,11 +179,19 @@ public class SyncMonitor {
 
             log(String.format("[OK]   %s — insertados=%d actualizados=%d errores=%d",
                 filename, stats[0], stats[1], stats[2]));
-            markProcessed(filename);
+            deleteFile(filepath);
             return true;
         } catch (SQLException e) {
             log("[ERROR] Procesando " + filename + ": " + e.getMessage());
             return false;
+        }
+    }
+
+    private void deleteFile(Path filepath) {
+        try {
+            Files.deleteIfExists(filepath);
+        } catch (IOException e) {
+            LOG.warning("No se pudo eliminar: " + filepath.getFileName());
         }
     }
 
@@ -269,21 +280,6 @@ public class SyncMonitor {
             if (lower.startsWith(e)) return e;
         }
         return null;
-    }
-
-    private Set<String> getProcessedSet() {
-        if (!Files.exists(processedFile)) return new HashSet<>();
-        try {
-            return new HashSet<>(Files.readAllLines(processedFile));
-        } catch (IOException e) { return new HashSet<>(); }
-    }
-
-    private void markProcessed(String filename) {
-        try (var pw = new FileWriter(processedFile.toFile(), true)) {
-            pw.write(filename + System.lineSeparator());
-        } catch (IOException e) {
-            LOG.warning("No se pudo marcar como procesado: " + filename);
-        }
     }
 
     private List<Map<String, String>> readCsv(Path path) throws IOException {

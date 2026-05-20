@@ -3,31 +3,33 @@ chcp 65001 >nul 2>&1
 setlocal
 
 :: ============================================================
-::  MiniMarket POS — Lanzador del Servidor Central
-::  Ejecuta Server.jar con java -jar (sin Maven)
-::  Si el JAR no existe, compila primero automaticamente.
+::  MiniMarket POS — Lanzador de Update.jar
+::  Monitorea DATOS/ y actualiza SQLite del servidor
+::  Uso:
+::    run_update.bat           → GUI Swing
+::    run_update.bat headless  → Monitoreo continuo (consola)
+::    run_update.bat once      → Un scan y termina (consola)
 :: ============================================================
 
 set "ROOT=%~dp0.."
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
-set "JAR=%ROOT%\SERVIDOR\dist\Server.jar"
+set "JAR=%ROOT%\SERVIDOR\dist\Update.jar"
+set "MODE="
+if /i "%~1"=="headless" set "MODE=--headless"
+if /i "%~1"=="once"     set "MODE=--once"
 
 echo.
-echo   MiniMarket POS ^| Servidor Central
+echo   MiniMarket POS ^| Modulo Update - Procesador
 echo   ==========================================
 
-:: Verificar Java
 where java >nul 2>&1
 if %ERRORLEVEL% neq 0 (
     echo   [ERROR] java no encontrado en PATH.
-    echo   Instale JRE 17+ y agregue java al PATH.
     pause & exit /b 1
 )
 
-:: Verificar JAR - si no existe, compilar
 if not exist "%JAR%" (
-    echo   Server.jar no encontrado. Compilando...
-    echo.
+    echo   Update.jar no encontrado. Compilando...
     call "%ROOT%\build_server.bat" --no-pause
     if %ERRORLEVEL% neq 0 (
         echo   [ERROR] Compilacion fallida.
@@ -35,16 +37,11 @@ if not exist "%JAR%" (
     )
 )
 
-if not exist "%JAR%" (
-    echo   [ERROR] Server.jar sigue sin existir tras la compilacion.
-    pause & exit /b 1
-)
-
-echo   Iniciando: %JAR%
+echo   Iniciando: %JAR% %MODE%
 echo   ==========================================
 echo.
 
 set "MINIMARKET_HOME=%ROOT%"
-java -jar "%JAR%"
+java -jar "%JAR%" %MODE%
 
 endlocal

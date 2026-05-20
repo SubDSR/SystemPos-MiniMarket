@@ -24,10 +24,20 @@ public final class Config {
         if (home != null && !home.isBlank()) {
             BASE_DIR = Path.of(home).toAbsolutePath();
         } else {
-            // Ejecutar desde APPLICATION/ → sube un nivel al raiz del proyecto
-            BASE_DIR = Path.of(System.getProperty("user.dir"))
-                           .toAbsolutePath()
-                           .getParent();
+            Path cwd     = Path.of(System.getProperty("user.dir")).toAbsolutePath();
+            String name  = cwd.getFileName() != null ? cwd.getFileName().toString() : "";
+            if (name.equalsIgnoreCase("APPLICATION")) {
+                // cd APPLICATION && java -jar ... → subir un nivel
+                BASE_DIR = cwd.getParent();
+            } else if (name.equalsIgnoreCase("dist") && cwd.getParent() != null
+                    && cwd.getParent().getFileName() != null
+                    && cwd.getParent().getFileName().toString().equalsIgnoreCase("APPLICATION")) {
+                // java -jar APPLICATION/dist/POSClient.jar desde APPLICATION/dist/
+                BASE_DIR = cwd.getParent().getParent();
+            } else {
+                // java -jar APPLICATION/dist/POSClient.jar desde la raiz → usar CWD
+                BASE_DIR = cwd;
+            }
         }
     }
 
