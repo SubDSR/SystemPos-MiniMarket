@@ -5,6 +5,8 @@ import com.minimarket.models.Venta;
 import com.minimarket.utils.Config;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -182,7 +184,7 @@ public class VentaService {
 
     public int exportarVentasCsv(Path exportPath) throws IOException {
         List<Venta> ventas = listarVentas();
-        try (PrintWriter pw = new PrintWriter(new FileWriter(exportPath.toFile()))) {
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8))) {
             pw.println("id,cliente_id,fecha,subtotal,igv,total,estado");
             for (Venta v : ventas) pw.println(v.toCsvRow());
         }
@@ -192,7 +194,7 @@ public class VentaService {
 
     public int exportarDetallesCsv(Path exportPath) throws IOException {
         List<DetalleVenta> detalles = listarDetalles();
-        try (PrintWriter pw = new PrintWriter(new FileWriter(exportPath.toFile()))) {
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8))) {
             pw.println("id,venta_id,producto_id,cantidad,precio_unitario,subtotal,estado");
             for (DetalleVenta d : detalles) pw.println(d.toCsvRow());
         }

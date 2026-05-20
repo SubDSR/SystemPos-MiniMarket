@@ -112,8 +112,8 @@ public class SyncMonitor {
 
         Set<String> processed = getProcessedSet();
         List<Path>  csvFiles;
-        try {
-            csvFiles = Files.list(datosDir)
+        try (java.util.stream.Stream<Path> stream = Files.list(datosDir)) {
+            csvFiles = stream
                 .filter(p -> p.toString().toLowerCase().endsWith(".csv"))
                 .sorted()
                 .toList();
@@ -288,21 +288,56 @@ public class SyncMonitor {
 
     private List<Map<String, String>> readCsv(Path path) throws IOException {
         List<Map<String, String>> rows = new ArrayList<>();
-        try (BufferedReader br = Files.newBufferedReader(path)) {
+        try (BufferedReader br = Files.newBufferedReader(path, java.nio.charset.StandardCharsets.UTF_8)) {
             String headerLine = br.readLine();
             if (headerLine == null) return rows;
-            String[] headers = headerLine.split(",");
+            String[] headers = parseCsvLine(headerLine);
             String line;
             while ((line = br.readLine()) != null) {
-                String[] values = line.split(",", -1);
+                if (line.isBlank()) continue;
+                String[] values = parseCsvLine(line);
                 Map<String, String> row = new LinkedHashMap<>();
-                for (int i = 0; i < headers.length && i < values.length; i++) {
-                    row.put(headers[i].strip(), values[i].strip());
+                for (int i = 0; i < headers.length; i++) {
+                    row.put(headers[i].strip(), i < values.length ? values[i] : "");
                 }
                 rows.add(row);
             }
         }
         return rows;
+    }
+
+    /** RFC 4180-compliant CSV line parser — handles quoted fields with embedded commas. */
+    private String[] parseCsvLine(String line) {
+        List<String> fields = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (inQuotes) {
+                if (c == '"') {
+                    // peek for escaped quote ""
+                    if (i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                        sb.append('"');
+                        i++;
+                    } else {
+                        inQuotes = false;
+                    }
+                } else {
+                    sb.append(c);
+                }
+            } else {
+                if (c == '"') {
+                    inQuotes = true;
+                } else if (c == ',') {
+                    fields.add(sb.toString());
+                    sb.setLength(0);
+                } else {
+                    sb.append(c);
+                }
+            }
+        }
+        fields.add(sb.toString());
+        return fields.toArray(new String[0]);
     }
 
     private int    parseInt(Map<String, String> row, String key) {

@@ -4,6 +4,8 @@ import com.minimarket.models.Producto;
 import com.minimarket.utils.Config;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.logging.Logger;
@@ -131,7 +133,7 @@ public class ProductoService {
     /** Exporta todos los productos activos a CSV para sincronizacion. */
     public int exportarCsv(Path exportPath) throws IOException {
         List<Producto> productos = listar();
-        try (PrintWriter pw = new PrintWriter(new FileWriter(exportPath.toFile()))) {
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8))) {
             pw.println("id,nombre,precio,stock,categoria,estado");
             for (Producto p : productos) {
                 pw.println(p.toCsvRow());

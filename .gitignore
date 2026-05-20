@@ -1,23 +1,38 @@
-.venv/
-venv/
-env/
-ENV/
-
+# Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-
+.venv/
+venv/
+env/
+ENV/
 build/
 dist/
 *.spec
 
+# Java / Maven
+target/
+*.class
+*.jar
+*.war
+*.ear
+.classpath
+.project
+.settings/
+*.iml
+.idea/
+
+# OS
 .DS_Store
 Thumbs.db
 Desktop.ini
 
+# Logs and exports
 APPLICATION/logs/*.log
+APPLICATION-JAVA/logs/*.log
 SERVIDOR/logs/*.log
 APPLICATION/exports/*.csv
 DATOS/*.csv
 SERVIDOR/database/*.db
+SERVIDOR-JAVA/database/*.db

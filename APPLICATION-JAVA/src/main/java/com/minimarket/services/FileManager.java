@@ -213,9 +213,12 @@ public class FileManager<T extends BinaryRecord> {
         List<T> result = new ArrayList<>();
         try (RandomAccessFile raf = new RandomAccessFile(datPath.toFile(), "r")) {
             byte[] data = new byte[recordSize];
-            while (raf.read(data) == recordSize) {
+            while (true) {
                 try {
+                    raf.readFully(data);
                     result.add(deserializer.apply(data));
+                } catch (EOFException eof) {
+                    break; // fin del archivo
                 } catch (Exception ignored) { }
             }
         } catch (IOException e) {

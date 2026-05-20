@@ -4,6 +4,8 @@ import com.minimarket.models.Cliente;
 import com.minimarket.utils.Config;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.logging.Logger;
@@ -113,7 +115,7 @@ public class ClienteService {
     /** Exporta todos los clientes activos a CSV para sincronizacion. */
     public int exportarCsv(Path exportPath) throws IOException {
         List<Cliente> clientes = listar();
-        try (PrintWriter pw = new PrintWriter(new FileWriter(exportPath.toFile()))) {
+        try (PrintWriter pw = new PrintWriter(Files.newBufferedWriter(exportPath, StandardCharsets.UTF_8))) {
             pw.println("id,nombre,dni,telefono,email,estado");
             for (Cliente c : clientes) {
                 pw.println(c.toCsvRow());

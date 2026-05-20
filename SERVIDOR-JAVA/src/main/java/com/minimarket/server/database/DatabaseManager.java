@@ -171,19 +171,24 @@ public class DatabaseManager {
 
     /** Retorna el ID de la sucursal, creandola si no existe. */
     public int getOrCreateSucursal(Connection conn, String hostname) throws SQLException {
-        PreparedStatement sel = conn.prepareStatement(
-            "SELECT id FROM sucursales WHERE hostname = ?");
-        sel.setString(1, hostname);
-        ResultSet rs = sel.executeQuery();
-        if (rs.next()) return rs.getInt("id");
+        try (PreparedStatement sel = conn.prepareStatement(
+                "SELECT id FROM sucursales WHERE hostname = ?")) {
+            sel.setString(1, hostname);
+            try (ResultSet rs = sel.executeQuery()) {
+                if (rs.next()) return rs.getInt("id");
+            }
+        }
 
-        PreparedStatement ins = conn.prepareStatement(
-            "INSERT INTO sucursales (hostname, nombre) VALUES (?, ?)");
-        ins.setString(1, hostname);
-        ins.setString(2, "Sucursal " + hostname);
-        ins.executeUpdate();
-        ResultSet gen = ins.getGeneratedKeys();
-        return gen.next() ? gen.getInt(1) : 1;
+        try (PreparedStatement ins = conn.prepareStatement(
+                "INSERT INTO sucursales (hostname, nombre) VALUES (?, ?)",
+                java.sql.Statement.RETURN_GENERATED_KEYS)) {
+            ins.setString(1, hostname);
+            ins.setString(2, "Sucursal " + hostname);
+            ins.executeUpdate();
+            try (ResultSet gen = ins.getGeneratedKeys()) {
+                return gen.next() ? gen.getInt(1) : 1;
+            }
+        }
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -192,29 +197,34 @@ public class DatabaseManager {
 
     /**
      * INSERT OR REPLACE generico para cualquier tabla.
+     * Todos los PreparedStatement y ResultSet se cierran correctamente.
      * @return "inserted" o "updated"
      */
     public String upsert(Connection conn, String table, String[] pkCols,
                          String[] cols, Object[] values) throws SQLException {
-        // Verificar si existe
+        // ── 1. Verificar si ya existe ─────────────────────────────────────────
         StringBuilder whereQ = new StringBuilder();
         for (int i = 0; i < pkCols.length; i++) {
             if (i > 0) whereQ.append(" AND ");
             whereQ.append(pkCols[i]).append(" = ?");
         }
-        PreparedStatement check = conn.prepareStatement(
-            "SELECT 1 FROM " + table + " WHERE " + whereQ);
-        for (int i = 0; i < pkCols.length; i++) {
-            for (int j = 0; j < cols.length; j++) {
-                if (cols[j].equals(pkCols[i])) {
-                    check.setObject(i + 1, values[j]);
-                    break;
+        boolean exists;
+        try (PreparedStatement check = conn.prepareStatement(
+                "SELECT 1 FROM " + table + " WHERE " + whereQ)) {
+            for (int i = 0; i < pkCols.length; i++) {
+                for (int j = 0; j < cols.length; j++) {
+                    if (cols[j].equals(pkCols[i])) {
+                        check.setObject(i + 1, values[j]);
+                        break;
+                    }
                 }
             }
+            try (ResultSet rs = check.executeQuery()) {
+                exists = rs.next();
+            }
         }
-        boolean exists = check.executeQuery().next();
 
-        // INSERT OR REPLACE
+        // ── 2. INSERT OR REPLACE ──────────────────────────────────────────────
         StringBuilder colsQ  = new StringBuilder();
         StringBuilder marksQ = new StringBuilder();
         for (int i = 0; i < cols.length; i++) {
@@ -222,12 +232,13 @@ public class DatabaseManager {
             colsQ.append(cols[i]);
             marksQ.append("?");
         }
-        PreparedStatement ins = conn.prepareStatement(
-            "INSERT OR REPLACE INTO " + table + " (" + colsQ + ") VALUES (" + marksQ + ")");
-        for (int i = 0; i < values.length; i++) {
-            ins.setObject(i + 1, values[i]);
+        try (PreparedStatement ins = conn.prepareStatement(
+                "INSERT OR REPLACE INTO " + table + " (" + colsQ + ") VALUES (" + marksQ + ")")) {
+            for (int i = 0; i < values.length; i++) {
+                ins.setObject(i + 1, values[i]);
+            }
+            ins.executeUpdate();
         }
-        ins.executeUpdate();
         return exists ? "updated" : "inserted";
     }
 
@@ -235,20 +246,22 @@ public class DatabaseManager {
     public void logSync(Connection conn, int sucursalId, String archivo,
                         String entidad, int insertados, int actualizados, int errores)
             throws SQLException {
-        PreparedStatement st = conn.prepareStatement(
-            "INSERT INTO sync_log (sucursal_id, archivo, entidad, registros_proc, registros_dup, registros_err)"
-            + " VALUES (?, ?, ?, ?, ?, ?)");
-        st.setInt(1, sucursalId); st.setString(2, archivo); st.setString(3, entidad);
-        st.setInt(4, insertados); st.setInt(5, actualizados); st.setInt(6, errores);
-        st.executeUpdate();
+        try (PreparedStatement st = conn.prepareStatement(
+                "INSERT INTO sync_log (sucursal_id, archivo, entidad, registros_proc, registros_dup, registros_err)"
+                + " VALUES (?, ?, ?, ?, ?, ?)")) {
+            st.setInt(1, sucursalId); st.setString(2, archivo); st.setString(3, entidad);
+            st.setInt(4, insertados); st.setInt(5, actualizados); st.setInt(6, errores);
+            st.executeUpdate();
+        }
     }
 
     /** Actualiza timestamp de ultima sincronizacion de la sucursal. */
     public void updateLastSync(Connection conn, int sucursalId) throws SQLException {
-        PreparedStatement st = conn.prepareStatement(
-            "UPDATE sucursales SET ultima_sync = datetime('now','localtime') WHERE id = ?");
-        st.setInt(1, sucursalId);
-        st.executeUpdate();
+        try (PreparedStatement st = conn.prepareStatement(
+                "UPDATE sucursales SET ultima_sync = datetime('now','localtime') WHERE id = ?")) {
+            st.setInt(1, sucursalId);
+            st.executeUpdate();
+        }
     }
 
     public Path getDbPath() { return dbPath; }
