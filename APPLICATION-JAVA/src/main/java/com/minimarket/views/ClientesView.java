@@ -3,235 +3,215 @@ package com.minimarket.views;
 import com.minimarket.models.Cliente;
 import com.minimarket.services.ClienteService;
 import com.minimarket.utils.Config;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
 import java.util.List;
 
 /**
- * Vista CRUD de Clientes.
- * Equivalente Java de views/clientes_view.py.
+ * Vista CRUD de clientes: tabla + formulario lateral.
  */
-public class ClientesView extends BorderPane implements MainWindow.Refreshable {
+public class ClientesView extends JPanel implements MainWindow.Refreshable {
 
-    private final ClienteService cliSvc = new ClienteService();
+    private final ClienteService svc;
 
-    private TableView<Cliente> tabla;
-    private TextField buscarField;
+    private final DefaultTableModel tableModel;
+    private final JTable table;
 
-    private TextField nombreField;
-    private TextField dniField;
-    private TextField telefonoField;
-    private TextField emailField;
-    private Label     statusLabel;
+    private final JTextField fNombre    = new JTextField();
+    private final JTextField fDni       = new JTextField();
+    private final JTextField fTelefono  = new JTextField();
+    private final JTextField fEmail     = new JTextField();
+    private final JTextField fBuscar    = new JTextField();
+    private final JLabel     statusLbl  = new JLabel(" ");
 
-    private Cliente selectedCliente = null;
+    private int editingId = 0;
 
-    public ClientesView() { build(); }
+    public ClientesView(ClienteService svc) {
+        this.svc = svc;
+        setBackground(Config.C_MAIN_BG);
+        setLayout(new BorderLayout(0, 18));
+        setBorder(new EmptyBorder(28, 28, 28, 28));
 
-    @SuppressWarnings("unchecked")
-    private void build() {
-        HBox toolbar = new HBox(10);
-        toolbar.setPadding(new Insets(0, 0, 12, 0));
-        toolbar.setAlignment(Pos.CENTER_LEFT);
+        add(buildHeader(), BorderLayout.NORTH);
 
-        Label titulo = new Label("Gestion de Clientes");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        String[] cols = {"ID", "Nombre", "DNI", "Telefono", "Email"};
+        tableModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        table = DashboardView.buildTable(tableModel);
+        table.getColumnModel().getColumn(0).setMaxWidth(55);
+        table.getColumnModel().getColumn(2).setMaxWidth(100);
+        table.getColumnModel().getColumn(3).setMaxWidth(110);
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        table.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) populateForm();
+        });
 
-        buscarField = new TextField();
-        buscarField.setPromptText("Buscar por nombre o DNI...");
-        buscarField.setPrefWidth(260);
-        buscarField.setStyle(fieldStyle());
-        buscarField.textProperty().addListener((obs, old, val) -> buscar(val));
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        JPanel tableCard = MainWindow.card(new BorderLayout());
+        tableCard.add(scroll, BorderLayout.CENTER);
 
-        Button nuevoBtn = buildBtn("Nuevo", Config.C_ACCENT);
-        nuevoBtn.setOnAction(e -> limpiarFormulario());
-        toolbar.getChildren().addAll(titulo, spacer, buscarField, nuevoBtn);
-
-        // ── Tabla ─────────────────────────────────────────────────────────────
-        tabla = new TableView<>();
-        tabla.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        tabla.setPlaceholder(new Label("No hay clientes registrados"));
-        tabla.getSelectionModel().selectedItemProperty()
-            .addListener((obs, old, sel) -> cargarEnFormulario(sel));
-
-        tabla.getColumns().addAll(
-            col("ID",       50,  cd -> String.valueOf(cd.getValue().getId())),
-            col("Nombre",   180, cd -> cd.getValue().getNombre()),
-            col("DNI",      100, cd -> cd.getValue().getDni()),
-            col("Telefono", 110, cd -> cd.getValue().getTelefono()),
-            col("Email",    180, cd -> cd.getValue().getEmail())
-        );
-        VBox.setVgrow(tabla, Priority.ALWAYS);
-
-        VBox form = buildForm();
-        form.setPrefWidth(280);
-
-        HBox content = new HBox(16);
-        VBox leftSide = new VBox(toolbar, tabla);
-        VBox.setVgrow(tabla, Priority.ALWAYS);
-        HBox.setHgrow(leftSide, Priority.ALWAYS);
-        content.getChildren().addAll(leftSide, form);
-
-        setCenter(content);
-        refresh();
+        add(tableCard,  BorderLayout.CENTER);
+        add(buildForm(), BorderLayout.EAST);
     }
 
-    private VBox buildForm() {
-        VBox form = new VBox(12);
-        form.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-padding: 20;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;");
+    private JPanel buildHeader() {
+        JPanel p = new JPanel(new BorderLayout(12, 0));
+        p.setOpaque(false);
+        p.add(MainWindow.pageTitle("Clientes"), BorderLayout.WEST);
 
-        Label formTitle = new Label("Datos del Cliente");
-        formTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
-        formTitle.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        right.setOpaque(false);
+        fBuscar.setPreferredSize(new Dimension(200, 32));
+        JButton btnBuscar = MainWindow.actionBtn("Buscar",  Config.C_ACCENT);
+        JButton btnTodos  = MainWindow.actionBtn("Todos",   Config.C_TEXT_MUTED);
+        btnBuscar.addActionListener(e -> loadTable(svc.buscar(fBuscar.getText())));
+        btnTodos.addActionListener(e  -> { fBuscar.setText(""); refresh(); });
 
-        nombreField   = fieldWithLabel(form, "Nombre *");
-        dniField      = fieldWithLabel(form, "DNI *");
-        telefonoField = fieldWithLabel(form, "Telefono");
-        emailField    = fieldWithLabel(form, "Email");
-
-        statusLabel = new Label("");
-        statusLabel.setWrapText(true);
-        statusLabel.setFont(Font.font("Segoe UI", 11));
-
-        Button guardarBtn  = buildBtn("Guardar",  Config.C_SUCCESS);
-        Button eliminarBtn = buildBtn("Eliminar", Config.C_ERROR);
-        guardarBtn.setMaxWidth(Double.MAX_VALUE);
-        eliminarBtn.setMaxWidth(Double.MAX_VALUE);
-
-        guardarBtn.setOnAction(e  -> guardar());
-        eliminarBtn.setOnAction(e -> eliminar());
-
-        form.getChildren().addAll(formTitle, guardarBtn, eliminarBtn, statusLabel);
-        return form;
+        right.add(new JLabel("Buscar:"));
+        right.add(fBuscar);
+        right.add(btnBuscar);
+        right.add(btnTodos);
+        p.add(right, BorderLayout.EAST);
+        return p;
     }
 
-    // ── Acciones ──────────────────────────────────────────────────────────────
+    private JPanel buildForm() {
+        JPanel card = MainWindow.card(new BorderLayout(0, 14));
+        card.setPreferredSize(new Dimension(280, 0));
+
+        JLabel title = new JLabel("Detalle del Cliente");
+        title.setFont(new Font("SansSerif", Font.BOLD, 14));
+        title.setForeground(Config.C_TEXT);
+        card.add(title, BorderLayout.NORTH);
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        fields.setOpaque(false);
+        GridBagConstraints gc = new GridBagConstraints();
+        gc.fill = GridBagConstraints.HORIZONTAL;
+        gc.insets = new Insets(4, 0, 4, 0);
+        gc.gridx = 0; gc.weightx = 1;
+
+        addField(fields, gc, "Nombre *",  fNombre,   0);
+        addField(fields, gc, "DNI *",     fDni,      1);
+        addField(fields, gc, "Telefono",  fTelefono, 2);
+        addField(fields, gc, "Email",     fEmail,    3);
+        card.add(fields, BorderLayout.CENTER);
+
+        JPanel btns = new JPanel(new GridLayout(1, 3, 8, 0));
+        btns.setOpaque(false);
+        JButton btnNuevo    = MainWindow.actionBtn("Nuevo",    Config.C_TEXT_MUTED);
+        JButton btnGuardar  = MainWindow.actionBtn("Guardar",  Config.C_SUCCESS);
+        JButton btnEliminar = MainWindow.actionBtn("Eliminar", Config.C_ERROR);
+
+        btnNuevo.addActionListener(e    -> clearForm());
+        btnGuardar.addActionListener(e  -> guardar());
+        btnEliminar.addActionListener(e -> eliminar());
+
+        btns.add(btnNuevo);
+        btns.add(btnGuardar);
+        btns.add(btnEliminar);
+
+        JPanel south = new JPanel(new BorderLayout(0, 8));
+        south.setOpaque(false);
+        statusLbl.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        statusLbl.setForeground(Config.C_TEXT_MUTED);
+        south.add(btns,      BorderLayout.NORTH);
+        south.add(statusLbl, BorderLayout.SOUTH);
+        card.add(south, BorderLayout.SOUTH);
+        return card;
+    }
+
+    private static void addField(JPanel p, GridBagConstraints gc,
+                                  String label, JTextField field, int row) {
+        gc.gridy = row * 2;
+        JLabel lbl = new JLabel(label);
+        lbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        lbl.setForeground(Config.C_TEXT_MUTED);
+        p.add(lbl, gc);
+        gc.gridy = row * 2 + 1;
+        field.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        field.setPreferredSize(new Dimension(0, 32));
+        p.add(field, gc);
+    }
+
+    @Override
+    public void refresh() {
+        loadTable(svc.listar());
+    }
+
+    private void loadTable(List<Cliente> lista) {
+        tableModel.setRowCount(0);
+        for (Cliente c : lista) {
+            tableModel.addRow(new Object[]{
+                c.getId(), c.getNombre(), c.getDni(), c.getTelefono(), c.getEmail()
+            });
+        }
+        clearForm();
+    }
+
+    private void populateForm() {
+        int row = table.getSelectedRow();
+        if (row < 0) return;
+        int id = (int) tableModel.getValueAt(row, 0);
+        Cliente c = svc.obtener(id);
+        if (c == null) return;
+        editingId = c.getId();
+        fNombre.setText(c.getNombre());
+        fDni.setText(c.getDni());
+        fTelefono.setText(c.getTelefono());
+        fEmail.setText(c.getEmail());
+        status(" ", Config.C_TEXT_MUTED);
+    }
 
     private void guardar() {
+        String nombre = fNombre.getText().strip();
+        String dni    = fDni.getText().strip();
+        if (nombre.isEmpty()) { status("El nombre es obligatorio.", Config.C_ERROR); return; }
+        if (dni.isEmpty())    { status("El DNI es obligatorio.", Config.C_ERROR); return; }
         try {
-            String nombre   = nombreField.getText().strip();
-            String dni      = dniField.getText().strip();
-            String telefono = telefonoField.getText().strip();
-            String email    = emailField.getText().strip();
-
-            if (selectedCliente == null) {
-                cliSvc.crear(nombre, dni, telefono, email);
-                setStatus("Cliente creado exitosamente.", Config.C_SUCCESS);
+            if (editingId == 0) {
+                svc.crear(nombre, dni, fTelefono.getText().strip(), fEmail.getText().strip());
+                status("Cliente creado.", Config.C_SUCCESS);
             } else {
-                cliSvc.actualizar(selectedCliente.getId(), nombre, dni, telefono, email);
-                setStatus("Cliente actualizado.", Config.C_SUCCESS);
+                svc.actualizar(editingId, nombre, dni,
+                    fTelefono.getText().strip(), fEmail.getText().strip());
+                status("Cliente actualizado.", Config.C_SUCCESS);
             }
-            limpiarFormulario();
             refresh();
-        } catch (Exception ex) {
-            setStatus("Error: " + ex.getMessage(), Config.C_ERROR);
+        } catch (IllegalArgumentException ex) {
+            status(ex.getMessage(), Config.C_ERROR);
         }
     }
 
     private void eliminar() {
-        if (selectedCliente == null) { setStatus("Seleccione un cliente.", Config.C_WARNING); return; }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-            "¿Eliminar al cliente '" + selectedCliente.getNombre() + "'?",
-            ButtonType.YES, ButtonType.NO);
-        confirm.setHeaderText("Confirmar eliminacion");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.YES) {
-                cliSvc.eliminar(selectedCliente.getId());
-                limpiarFormulario();
-                refresh();
-                setStatus("Cliente eliminado.", Config.C_SUCCESS);
-            }
-        });
+        if (editingId == 0) { status("Seleccione un cliente.", Config.C_WARNING); return; }
+        int ok = JOptionPane.showConfirmDialog(this,
+            "¿Eliminar cliente ID=" + editingId + "?", "Confirmar",
+            JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (ok != JOptionPane.YES_OPTION) return;
+        if (svc.eliminar(editingId)) {
+            status("Cliente eliminado.", Config.C_SUCCESS);
+            refresh();
+        } else {
+            status("No se pudo eliminar.", Config.C_ERROR);
+        }
     }
 
-    private void buscar(String termino) {
-        List<Cliente> resultados = termino.isBlank()
-            ? cliSvc.listar() : cliSvc.buscar(termino);
-        tabla.setItems(FXCollections.observableArrayList(resultados));
+    private void clearForm() {
+        editingId = 0;
+        fNombre.setText(""); fDni.setText("");
+        fTelefono.setText(""); fEmail.setText("");
+        table.clearSelection();
+        status(" ", Config.C_TEXT_MUTED);
     }
 
-    private void cargarEnFormulario(Cliente c) {
-        selectedCliente = c;
-        if (c == null) return;
-        nombreField.setText(c.getNombre());
-        dniField.setText(c.getDni());
-        telefonoField.setText(c.getTelefono());
-        emailField.setText(c.getEmail());
-        statusLabel.setText("");
-    }
-
-    private void limpiarFormulario() {
-        selectedCliente = null;
-        nombreField.clear(); dniField.clear();
-        telefonoField.clear(); emailField.clear();
-        statusLabel.setText("");
-        tabla.getSelectionModel().clearSelection();
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    @Override
-    public void refresh() {
-        tabla.setItems(FXCollections.observableArrayList(cliSvc.listar()));
-    }
-
-    private void setStatus(String msg, String color) {
-        statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: " + color + ";");
-    }
-
-    @FunctionalInterface
-    interface CellValue { String get(TableColumn.CellDataFeatures<Cliente, String> cd); }
-
-    @SuppressWarnings("unchecked")
-    private TableColumn<Cliente, String> col(String title, int width, CellValue fn) {
-        TableColumn<Cliente, String> c = new TableColumn<>(title);
-        c.setCellValueFactory(cd -> new SimpleStringProperty(fn.get(cd)));
-        c.setPrefWidth(width);
-        return c;
-    }
-
-    private TextField fieldWithLabel(VBox parent, String label) {
-        Label lbl = new Label(label);
-        lbl.setFont(Font.font("Segoe UI", 11));
-        lbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
-        TextField field = new TextField();
-        field.setStyle(fieldStyle());
-        parent.getChildren().addAll(lbl, field);
-        return field;
-    }
-
-    private String fieldStyle() {
-        return "-fx-background-color: white;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 6;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8;";
-    }
-
-    private Button buildBtn(String text, String bg) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: " + bg + ";"
-            + "-fx-text-fill: white;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8 16;"
-            + "-fx-font-weight: bold;"
-            + "-fx-cursor: hand;");
-        return btn;
+    private void status(String msg, Color color) {
+        statusLbl.setText(msg);
+        statusLbl.setForeground(color);
     }
 }

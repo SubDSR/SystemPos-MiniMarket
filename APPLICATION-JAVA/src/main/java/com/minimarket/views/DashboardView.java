@@ -5,183 +5,164 @@ import com.minimarket.services.ClienteService;
 import com.minimarket.services.ProductoService;
 import com.minimarket.services.VentaService;
 import com.minimarket.utils.Config;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 
-import java.util.Comparator;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import javax.swing.table.DefaultTableCellRenderer;
+import java.awt.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * Vista Dashboard — KPIs y resumen del dia.
- * Equivalente Java de views/dashboard_view.py.
+ * Vista del dashboard: KPIs del dia + tabla de ultimas ventas.
  */
-public class DashboardView extends VBox implements MainWindow.Refreshable {
+public class DashboardView extends JPanel implements MainWindow.Refreshable {
 
-    private final ProductoService prodSvc  = new ProductoService();
-    private final ClienteService  cliSvc   = new ClienteService();
-    private final VentaService    ventaSvc = new VentaService();
+    private final VentaService    ventaSvc;
+    private final ProductoService productoSvc;
+    private final ClienteService  clienteSvc;
 
-    private Label ventasHoyLabel;
-    private Label totalHoyLabel;
-    private Label productosLabel;
-    private Label clientesLabel;
+    private final JLabel kpiVentas    = kpiValue("0");
+    private final JLabel kpiIngresos  = kpiValue("S/ 0.00");
+    private final JLabel kpiProductos = kpiValue("0");
+    private final JLabel kpiClientes  = kpiValue("0");
 
-    private TableView<Venta> ventasTable;
+    private final DefaultTableModel tableModel;
 
-    public DashboardView() {
-        setSpacing(20);
-        setPadding(new Insets(0));
-        build();
-        refresh();
-    }
+    public DashboardView(VentaService ventaSvc, ProductoService productoSvc,
+                         ClienteService clienteSvc) {
+        this.ventaSvc    = ventaSvc;
+        this.productoSvc = productoSvc;
+        this.clienteSvc  = clienteSvc;
 
-    private void build() {
-        // Titulo
-        Label titulo = new Label("Dashboard — Resumen del Dia");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        setBackground(Config.C_MAIN_BG);
+        setLayout(new BorderLayout(0, 20));
+        setBorder(new EmptyBorder(28, 28, 28, 28));
 
-        // Fila de KPI cards
-        HBox kpiRow = buildKpiRow();
+        // Cabecera
+        JPanel header = new JPanel(new BorderLayout());
+        header.setOpaque(false);
+        header.add(MainWindow.pageTitle("Dashboard"), BorderLayout.WEST);
+
+        JLabel fecha = new JLabel(
+            "Hoy: " + java.time.LocalDate.now().format(
+                java.time.format.DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+        fecha.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        fecha.setForeground(Config.C_TEXT_MUTED);
+        header.add(fecha, BorderLayout.EAST);
+        add(header, BorderLayout.NORTH);
+
+        // KPIs
+        JPanel kpiRow = new JPanel(new GridLayout(1, 4, 16, 0));
+        kpiRow.setOpaque(false);
+        kpiRow.add(kpiCard("Ventas Hoy",    kpiVentas,    Config.C_ACCENT));
+        kpiRow.add(kpiCard("Ingresos Hoy",  kpiIngresos,  Config.C_SUCCESS));
+        kpiRow.add(kpiCard("Productos",      kpiProductos, new Color(124, 58, 237)));
+        kpiRow.add(kpiCard("Clientes",       kpiClientes,  new Color(234, 88, 12)));
 
         // Tabla de ultimas ventas
-        VBox tableSection = buildRecentSalesTable();
-        VBox.setVgrow(tableSection, Priority.ALWAYS);
+        String[] cols = {"ID", "Fecha", "Cliente ID", "Subtotal", "IGV", "Total", "Estado"};
+        tableModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        JTable table = buildTable(tableModel);
+        table.getColumnModel().getColumn(0).setMaxWidth(60);
+        table.getColumnModel().getColumn(2).setMaxWidth(90);
 
-        // Boton refrescar
-        Button refreshBtn = new Button("Actualizar");
-        refreshBtn.setStyle(accentStyle());
-        refreshBtn.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
-        refreshBtn.setOnAction(e -> refresh());
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
 
-        HBox footer = new HBox(refreshBtn);
-        footer.setAlignment(Pos.CENTER_RIGHT);
+        JPanel tableCard = MainWindow.card(new BorderLayout(0, 10));
+        JLabel tLabel = new JLabel("Ultimas Ventas");
+        tLabel.setFont(new Font("SansSerif", Font.BOLD, 14));
+        tLabel.setForeground(Config.C_TEXT);
+        tableCard.add(tLabel, BorderLayout.NORTH);
+        tableCard.add(scroll, BorderLayout.CENTER);
 
-        getChildren().addAll(titulo, kpiRow, tableSection, footer);
+        JPanel center = new JPanel(new BorderLayout(0, 18));
+        center.setOpaque(false);
+        center.add(kpiRow, BorderLayout.NORTH);
+        center.add(tableCard, BorderLayout.CENTER);
+        add(center, BorderLayout.CENTER);
     }
-
-    private HBox buildKpiRow() {
-        ventasHoyLabel  = new Label("0");
-        totalHoyLabel   = new Label("S/0.00");
-        productosLabel  = new Label("0");
-        clientesLabel   = new Label("0");
-
-        HBox row = new HBox(16);
-        row.getChildren().addAll(
-            buildKpiCard("Ventas Hoy",      ventasHoyLabel, Config.C_ACCENT),
-            buildKpiCard("Ingresos Hoy",    totalHoyLabel,  Config.C_SUCCESS),
-            buildKpiCard("Total Productos", productosLabel, Config.C_WARNING),
-            buildKpiCard("Total Clientes",  clientesLabel,  Config.C_SIDEBAR_BG)
-        );
-        return row;
-    }
-
-    private VBox buildKpiCard(String titulo, Label valueLabel, String accentColor) {
-        VBox card = new VBox(6);
-        card.setPadding(new Insets(18, 22, 18, 22));
-        card.setMinWidth(160);
-        card.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;"
-            + "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 8, 0, 0, 2);");
-
-        Label tituloLbl = new Label(titulo);
-        tituloLbl.setFont(Font.font("Segoe UI", 11));
-        tituloLbl.setStyle("-fx-text-fill: " + Config.C_TEXT_MUTED + ";");
-
-        valueLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 26));
-        valueLabel.setStyle("-fx-text-fill: " + accentColor + ";");
-
-        card.getChildren().addAll(tituloLbl, valueLabel);
-        HBox.setHgrow(card, Priority.ALWAYS);
-        return card;
-    }
-
-    @SuppressWarnings("unchecked")
-    private VBox buildRecentSalesTable() {
-        Label titulo = new Label("Ultimas Ventas");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
-
-        ventasTable = new TableView<>();
-        ventasTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        ventasTable.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 8;");
-        ventasTable.setPlaceholder(new Label("No hay ventas registradas"));
-
-        TableColumn<Venta, String> idCol = new TableColumn<>("#");
-        idCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(String.valueOf(cd.getValue().getId())));
-        idCol.setPrefWidth(50);
-
-        TableColumn<Venta, String> fechaCol = new TableColumn<>("Fecha");
-        fechaCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(cd.getValue().getFecha()));
-
-        TableColumn<Venta, String> clienteCol = new TableColumn<>("Cliente");
-        clienteCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(cd.getValue().getClienteId() == 0
-                ? "Anonimo" : "ID: " + cd.getValue().getClienteId()));
-
-        TableColumn<Venta, String> subtotalCol = new TableColumn<>("Subtotal");
-        subtotalCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(String.format("S/%.2f", cd.getValue().getSubtotal())));
-
-        TableColumn<Venta, String> igvCol = new TableColumn<>("IGV");
-        igvCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(String.format("S/%.2f", cd.getValue().getIgv())));
-
-        TableColumn<Venta, String> totalCol = new TableColumn<>("Total");
-        totalCol.setCellValueFactory(cd ->
-            new SimpleStringProperty(String.format("S/%.2f", cd.getValue().getTotal())));
-        totalCol.setStyle("-fx-font-weight: bold;");
-
-        ventasTable.getColumns().addAll(idCol, fechaCol, clienteCol, subtotalCol, igvCol, totalCol);
-
-        VBox section = new VBox(10, titulo, ventasTable);
-        section.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-padding: 16;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;");
-        VBox.setVgrow(ventasTable, Priority.ALWAYS);
-        return section;
-    }
-
-    // ════════════════════════════════════════════════════════════════════════
-    // REFRESH
-    // ════════════════════════════════════════════════════════════════════════
 
     @Override
     public void refresh() {
         List<Venta> hoy = ventaSvc.ventasHoy();
-        ventasHoyLabel.setText(String.valueOf(hoy.size()));
-        totalHoyLabel.setText(String.format("S/%.2f", ventaSvc.totalHoy()));
-        productosLabel.setText(String.valueOf(prodSvc.contar()));
-        clientesLabel.setText(String.valueOf(cliSvc.contar()));
+        kpiVentas.setText(String.valueOf(hoy.size()));
+        kpiIngresos.setText(String.format("S/ %.2f", ventaSvc.totalHoy()));
+        kpiProductos.setText(String.valueOf(productoSvc.contar()));
+        kpiClientes.setText(String.valueOf(clienteSvc.contar()));
 
-        // Mostrar las 10 ventas mas recientes
-        List<Venta> recientes = ventaSvc.listarVentas().stream()
-            .sorted(Comparator.comparingInt(Venta::getId).reversed())
-            .limit(10)
-            .collect(Collectors.toList());
-        ventasTable.setItems(FXCollections.observableArrayList(recientes));
+        tableModel.setRowCount(0);
+        List<Venta> todas = ventaSvc.listarVentas();
+        int from = Math.max(0, todas.size() - 10);
+        for (int i = todas.size() - 1; i >= from; i--) {
+            Venta v = todas.get(i);
+            tableModel.addRow(new Object[]{
+                v.getId(), v.getFecha(), v.getClienteId() == 0 ? "—" : v.getClienteId(),
+                String.format("S/ %.2f", v.getSubtotal()),
+                String.format("S/ %.2f", v.getIgv()),
+                String.format("S/ %.2f", v.getTotal()),
+                v.getEstado() == 1 ? "Activa" : "Anulada"
+            });
+        }
     }
 
-    private String accentStyle() {
-        return "-fx-background-color: " + Config.C_ACCENT + ";"
-            + "-fx-text-fill: white;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8 18;"
-            + "-fx-cursor: hand;";
+    // ── Helpers de construccion ────────────────────────────────────────────
+
+    private static JPanel kpiCard(String titulo, JLabel value, Color color) {
+        JPanel card = new JPanel(new BorderLayout(0, 10));
+        card.setBackground(Color.WHITE);
+        card.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createMatteBorder(0, 4, 0, 0, color),
+            BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(Config.C_BORDER, 1),
+                new EmptyBorder(16, 18, 16, 18)
+            )
+        ));
+
+        JLabel lbl = new JLabel(titulo.toUpperCase());
+        lbl.setFont(new Font("SansSerif", Font.BOLD, 10));
+        lbl.setForeground(Config.C_TEXT_MUTED);
+
+        value.setFont(new Font("SansSerif", Font.BOLD, 26));
+        value.setForeground(color);
+
+        card.add(lbl,   BorderLayout.NORTH);
+        card.add(value, BorderLayout.CENTER);
+        return card;
+    }
+
+    private static JLabel kpiValue(String text) {
+        JLabel l = new JLabel(text);
+        l.setFont(new Font("SansSerif", Font.BOLD, 26));
+        return l;
+    }
+
+    static JTable buildTable(DefaultTableModel model) {
+        JTable table = new JTable(model);
+        table.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        table.setRowHeight(30);
+        table.setGridColor(Config.C_BORDER);
+        table.setShowVerticalLines(false);
+        table.setSelectionBackground(new Color(219, 234, 254));
+        table.setSelectionForeground(Config.C_TEXT);
+        table.getTableHeader().setFont(new Font("SansSerif", Font.BOLD, 12));
+        table.getTableHeader().setBackground(new Color(248, 250, 252));
+        table.getTableHeader().setForeground(Config.C_TEXT_MUTED);
+        table.setAutoResizeMode(JTable.AUTO_RESIZE_LAST_COLUMN);
+
+        // Filas alternadas
+        table.setDefaultRenderer(Object.class, new DefaultTableCellRenderer() {
+            @Override
+            public Component getTableCellRendererComponent(JTable t, Object val,
+                    boolean sel, boolean focus, int row, int col) {
+                Component c = super.getTableCellRendererComponent(t, val, sel, focus, row, col);
+                if (!sel) c.setBackground(row % 2 == 0 ? Color.WHITE : new Color(248, 250, 252));
+                return c;
+            }
+        });
+        return table;
     }
 }

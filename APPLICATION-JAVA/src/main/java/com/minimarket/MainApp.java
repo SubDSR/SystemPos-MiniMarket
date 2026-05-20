@@ -3,49 +3,38 @@ package com.minimarket;
 import com.minimarket.utils.AppLogger;
 import com.minimarket.utils.Config;
 import com.minimarket.views.MainWindow;
-import javafx.application.Application;
-import javafx.scene.Scene;
-import javafx.stage.Stage;
+
+import javax.swing.*;
 
 /**
- * Punto de entrada del Sistema POS MiniMarket — version Java.
- *
- * Equivalente Java de APPLICATION/main.py.
- *
- * Ejecutar:
- *   mvn javafx:run             (desde APPLICATION-JAVA/)
- *   o con variable de entorno:
- *   MINIMARKET_HOME=C:\ruta\del\proyecto mvn javafx:run
+ * Punto de entrada del Sistema POS MiniMarket.
+ * Tecnologia: Java SE 17 + Swing
  */
-public class MainApp extends Application {
-
-    @Override
-    public void start(Stage primaryStage) {
-        // Inicializar sistema de logging
-        AppLogger.init();
-
-        // Crear directorios necesarios
-        Config.initDirectories();
-
-        // Construir la escena principal
-        MainWindow mainWindow = new MainWindow();
-        Scene scene = new Scene(mainWindow, 1200, 740);
-
-        primaryStage.setTitle(Config.APP_NAME + " — " + Config.EMPRESA);
-        primaryStage.setScene(scene);
-        primaryStage.setMinWidth(900);
-        primaryStage.setMinHeight(600);
-
-        // Maximizar al iniciar (comportamiento similar a Tkinter state='zoomed')
-        primaryStage.setMaximized(true);
-
-        primaryStage.show();
-
-        AppLogger.getLogger("MainApp")
-            .info("Aplicacion iniciada. BASE_DIR=" + Config.BASE_DIR);
-    }
+public class MainApp {
 
     public static void main(String[] args) {
-        launch(args);
+        AppLogger.init();
+        Config.initDirectories();
+
+        // Usar Nimbus si esta disponible; fallback a Look&Feel del sistema
+        try {
+            for (UIManager.LookAndFeelInfo info : UIManager.getInstalledLookAndFeels()) {
+                if ("Nimbus".equals(info.getName())) {
+                    UIManager.setLookAndFeel(info.getClassName());
+                    break;
+                }
+            }
+        } catch (Exception e) {
+            try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
+            catch (Exception ignored) { }
+        }
+
+        SwingUtilities.invokeLater(() -> {
+            MainWindow window = new MainWindow();
+            window.setExtendedState(JFrame.MAXIMIZED_BOTH);
+            window.setVisible(true);
+            AppLogger.getLogger("MainApp").info(
+                "Aplicacion iniciada. BASE_DIR=" + Config.BASE_DIR);
+        });
     }
 }

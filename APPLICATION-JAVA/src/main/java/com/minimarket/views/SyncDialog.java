@@ -2,114 +2,113 @@ package com.minimarket.views;
 
 import com.minimarket.sync.SyncAgent;
 import com.minimarket.utils.Config;
-import javafx.application.Platform;
-import javafx.geometry.Insets;
-import javafx.scene.control.*;
-import javafx.scene.layout.VBox;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
+
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import java.awt.*;
 
 /**
- * Dialogo de sincronizacion con el servidor central.
- * Exporta datos a CSV y los copia a la carpeta compartida de red.
- * Equivalente Java de views/sync_dialog.py.
+ * Dialogo de sincronizacion: ejecuta SyncAgent en un hilo daemon
+ * y muestra el log en tiempo real mediante SwingWorker.
  */
-public class SyncDialog extends Dialog<Void> {
+public class SyncDialog extends JDialog {
 
-    private TextArea logArea;
-    private Label    statusLabel;
-    private Button   syncBtn;
+    private final JTextArea logArea = new JTextArea();
+    private final JButton   btnSync = MainWindow.actionBtn("Sincronizar Ahora", Config.C_SUCCESS);
+    private final JButton   btnClose = MainWindow.actionBtn("Cerrar", Config.C_TEXT_MUTED);
+    private boolean syncing = false;
 
-    public SyncDialog() {
-        setTitle("Sincronizar con Servidor Central");
-        setHeaderText(null);
-        buildContent();
-        getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
-        getDialogPane().setPrefWidth(600);
-        getDialogPane().setPrefHeight(460);
-    }
+    public SyncDialog(Frame parent) {
+        super(parent, "Sincronizacion con Servidor", true);
+        setSize(560, 440);
+        setMinimumSize(new Dimension(480, 360));
+        setLocationRelativeTo(parent);
+        setLayout(new BorderLayout());
 
-    private void buildContent() {
-        VBox content = new VBox(14);
-        content.setPadding(new Insets(16));
-        content.setStyle("-fx-background-color: " + Config.C_MAIN_BG + ";");
-
-        // Titulo
-        Label titulo = new Label("Sincronizacion de Datos");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
-
-        // Info
-        Label info = new Label(
-            "Exporta los datos locales a CSV y los copia a:\n" +
-            "  Red (UNC): " + Config.UNC_DATOS + "\n" +
-            "  Fallback: " + Config.DATOS_DIR);
-        info.setFont(Font.font("Segoe UI", 11));
-        info.setStyle("-fx-text-fill: " + Config.C_TEXT_MUTED + ";");
-        info.setWrapText(true);
-
-        // Area de log
-        logArea = new TextArea();
+        // Log area
         logArea.setEditable(false);
-        logArea.setPrefHeight(220);
-        logArea.setFont(Font.font("Consolas", 11));
-        logArea.setStyle("-fx-background-color: #1e293b; -fx-text-fill: #94fa75;");
-        logArea.setWrapText(true);
+        logArea.setFont(new Font("Monospaced", Font.PLAIN, 12));
+        logArea.setBackground(new Color(15, 23, 42));
+        logArea.setForeground(new Color(148, 250, 117));
+        logArea.setMargin(new Insets(10, 12, 10, 12));
+        logArea.setLineWrap(true);
+        logArea.setWrapStyleWord(true);
+        JScrollPane scroll = new JScrollPane(logArea);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
+        add(scroll, BorderLayout.CENTER);
 
-        // Status
-        statusLabel = new Label("Listo para sincronizar.");
-        statusLabel.setFont(Font.font("Segoe UI", 12));
-        statusLabel.setStyle("-fx-text-fill: " + Config.C_TEXT_MUTED + ";");
+        // Header
+        JPanel header = new JPanel(new BorderLayout());
+        header.setBackground(new Color(30, 41, 59));
+        header.setBorder(new EmptyBorder(14, 16, 14, 16));
+        JLabel title = new JLabel("Sincronizacion de Datos");
+        title.setFont(new Font("SansSerif", Font.BOLD, 14));
+        title.setForeground(Color.WHITE);
+        JLabel sub = new JLabel("Exporta CSV y copia a carpeta DATOS/");
+        sub.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        sub.setForeground(new Color(148, 163, 184));
+        JPanel texts = new JPanel(new BorderLayout(0, 3));
+        texts.setOpaque(false);
+        texts.add(title, BorderLayout.NORTH);
+        texts.add(sub,   BorderLayout.SOUTH);
+        header.add(texts, BorderLayout.CENTER);
+        add(header, BorderLayout.NORTH);
 
-        // Boton
-        syncBtn = new Button("Iniciar Sincronizacion");
-        syncBtn.setStyle("-fx-background-color: " + Config.C_ACCENT + ";"
-            + "-fx-text-fill: white;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 10 24;"
-            + "-fx-font-weight: bold;"
-            + "-fx-cursor: hand;");
-        syncBtn.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
-        syncBtn.setMaxWidth(Double.MAX_VALUE);
-        syncBtn.setOnAction(e -> ejecutarSync());
+        // Footer
+        JPanel footer = new JPanel(new FlowLayout(FlowLayout.RIGHT, 10, 10));
+        footer.setBackground(new Color(30, 41, 59));
+        btnSync.addActionListener(e  -> runSync());
+        btnClose.addActionListener(e -> dispose());
+        footer.add(btnSync);
+        footer.add(btnClose);
+        add(footer, BorderLayout.SOUTH);
 
-        content.getChildren().addAll(titulo, info, logArea, statusLabel, syncBtn);
-        getDialogPane().setContent(content);
+        appendLog("Listo. Haga clic en 'Sincronizar Ahora' para iniciar.");
+        appendLog("Destino primario : " + Config.UNC_DATOS);
+        appendLog("Destino fallback : " + Config.DATOS_DIR);
     }
 
-    private void ejecutarSync() {
-        syncBtn.setDisable(true);
-        logArea.clear();
-        setStatus("Sincronizando...", Config.C_ACCENT);
-        appendLog("=".repeat(50));
+    private void runSync() {
+        if (syncing) return;
+        syncing = true;
+        btnSync.setEnabled(false);
+        logArea.setText("");
+        appendLog("Iniciando sincronizacion...");
 
-        SyncAgent agent = new SyncAgent(msg -> Platform.runLater(() -> appendLog(msg)));
+        SwingWorker<SyncAgent.SyncResult, String> worker = new SwingWorker<>() {
+            @Override
+            protected SyncAgent.SyncResult doInBackground() {
+                SyncAgent agent = new SyncAgent(msg -> publish(msg));
+                return agent.sincronizar();
+            }
 
-        // Ejecutar en hilo de fondo para no bloquear la UI
-        Thread thread = new Thread(() -> {
-            SyncAgent.SyncResult result = agent.sincronizar();
-            Platform.runLater(() -> {
-                appendLog("=".repeat(50));
-                if (result.success) {
-                    setStatus("Sincronizacion exitosa. " + result.filesProcessed + " archivo(s) enviado(s).",
-                        Config.C_SUCCESS);
-                } else {
-                    setStatus("Error en sincronizacion: " + result.errorMessage, Config.C_ERROR);
+            @Override
+            protected void process(java.util.List<String> chunks) {
+                for (String msg : chunks) appendLog(msg);
+            }
+
+            @Override
+            protected void done() {
+                try {
+                    SyncAgent.SyncResult res = get();
+                    if (res.success) {
+                        appendLog("✓ Sincronizacion completada. Archivos: " + res.filesProcessed);
+                    } else {
+                        appendLog("✗ Error: " + res.errorMessage);
+                    }
+                } catch (Exception ex) {
+                    appendLog("✗ Error inesperado: " + ex.getMessage());
+                } finally {
+                    syncing = false;
+                    btnSync.setEnabled(true);
                 }
-                syncBtn.setDisable(false);
-            });
-        });
-        thread.setDaemon(true);
-        thread.start();
+            }
+        };
+        worker.execute();
     }
 
     private void appendLog(String msg) {
-        logArea.appendText(msg + "\n");
-        logArea.setScrollTop(Double.MAX_VALUE);
-    }
-
-    private void setStatus(String msg, String color) {
-        statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: " + color + ";");
+        logArea.append(msg + "\n");
+        logArea.setCaretPosition(logArea.getDocument().getLength());
     }
 }

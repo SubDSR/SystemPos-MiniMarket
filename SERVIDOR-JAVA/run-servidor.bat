@@ -14,7 +14,7 @@ echo Iniciando Servidor Central MiniMarket (Java)...
 echo Proyecto: %PROJECT_ROOT%
 
 cd /d "%~dp0"
-mvn javafx:run -q
+mvn compile exec:java -q
 
 if %ERRORLEVEL% neq 0 (
     echo.

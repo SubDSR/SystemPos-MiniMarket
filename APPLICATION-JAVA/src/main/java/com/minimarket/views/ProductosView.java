@@ -3,257 +3,252 @@ package com.minimarket.views;
 import com.minimarket.models.Producto;
 import com.minimarket.services.ProductoService;
 import com.minimarket.utils.Config;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
 import java.util.List;
 
 /**
- * Vista CRUD de Productos.
- * Equivalente Java de views/productos_view.py.
+ * Vista CRUD de productos: tabla + formulario lateral.
  */
-public class ProductosView extends BorderPane implements MainWindow.Refreshable {
+public class ProductosView extends JPanel implements MainWindow.Refreshable {
 
-    private final ProductoService prodSvc = new ProductoService();
+    private final ProductoService svc;
 
-    private TableView<Producto> tabla;
-    private TextField buscarField;
+    private final DefaultTableModel tableModel;
+    private final JTable table;
 
-    // Formulario
-    private TextField  nombreField;
-    private TextField  precioField;
-    private TextField  stockField;
-    private TextField  categoriaField;
-    private Label      statusLabel;
+    // Campos del formulario
+    private final JTextField fNombre    = new JTextField();
+    private final JTextField fPrecio    = new JTextField();
+    private final JTextField fStock     = new JTextField();
+    private final JTextField fCategoria = new JTextField();
+    private final JTextField fBuscar    = new JTextField();
+    private final JLabel     statusLbl  = new JLabel(" ");
 
-    private Producto   selectedProduct = null;
+    private int editingId = 0;
 
-    public ProductosView() { build(); }
+    public ProductosView(ProductoService svc) {
+        this.svc = svc;
+        setBackground(Config.C_MAIN_BG);
+        setLayout(new BorderLayout(0, 18));
+        setBorder(new EmptyBorder(28, 28, 28, 28));
 
-    @SuppressWarnings("unchecked")
-    private void build() {
-        // ── Toolbar ──────────────────────────────────────────────────────────
-        HBox toolbar = new HBox(10);
-        toolbar.setPadding(new Insets(0, 0, 12, 0));
-        toolbar.setAlignment(Pos.CENTER_LEFT);
+        add(buildHeader(), BorderLayout.NORTH);
 
-        Label titulo = new Label("Gestion de Productos");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        String[] cols = {"ID", "Nombre", "Precio", "Stock", "Categoria"};
+        tableModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        table = DashboardView.buildTable(tableModel);
+        table.getColumnModel().getColumn(0).setMaxWidth(55);
+        table.getColumnModel().getColumn(2).setMaxWidth(90);
+        table.getColumnModel().getColumn(3).setMaxWidth(75);
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        table.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) populateForm();
+        });
 
-        buscarField = new TextField();
-        buscarField.setPromptText("Buscar por nombre o categoria...");
-        buscarField.setPrefWidth(260);
-        buscarField.setStyle(fieldStyle());
-        buscarField.textProperty().addListener((obs, old, val) -> buscar(val));
+        JScrollPane scroll = new JScrollPane(table);
+        scroll.setBorder(BorderFactory.createEmptyBorder());
 
-        Button nuevoBtn = buildBtn("Nuevo", Config.C_ACCENT, "white");
-        nuevoBtn.setOnAction(e -> limpiarFormulario());
+        JPanel tableCard = MainWindow.card(new BorderLayout());
+        tableCard.add(scroll, BorderLayout.CENTER);
 
-        toolbar.getChildren().addAll(titulo, spacer, buscarField, nuevoBtn);
-
-        // ── Tabla ─────────────────────────────────────────────────────────────
-        tabla = new TableView<>();
-        tabla.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        tabla.setPlaceholder(new Label("No hay productos registrados"));
-        tabla.getSelectionModel().selectedItemProperty()
-            .addListener((obs, old, sel) -> cargarEnFormulario(sel));
-
-        TableColumn<Producto, String> idCol = col("ID", 50,
-            cd -> String.valueOf(cd.getValue().getId()));
-        TableColumn<Producto, String> nomCol = col("Nombre", 200,
-            cd -> cd.getValue().getNombre());
-        TableColumn<Producto, String> precCol = col("Precio", 90,
-            cd -> String.format("S/%.2f", cd.getValue().getPrecio()));
-        TableColumn<Producto, String> stkCol = col("Stock", 70,
-            cd -> String.valueOf(cd.getValue().getStock()));
-        TableColumn<Producto, String> catCol = col("Categoria", 130,
-            cd -> cd.getValue().getCategoria());
-
-        tabla.getColumns().addAll(idCol, nomCol, precCol, stkCol, catCol);
-        VBox.setVgrow(tabla, Priority.ALWAYS);
-
-        // ── Formulario ────────────────────────────────────────────────────────
-        VBox form = buildForm();
-        form.setPrefWidth(280);
-
-        // ── Layout principal ──────────────────────────────────────────────────
-        HBox content = new HBox(16);
-        VBox leftSide = new VBox(toolbar, tabla);
-        VBox.setVgrow(tabla, Priority.ALWAYS);
-        HBox.setHgrow(leftSide, Priority.ALWAYS);
-        content.getChildren().addAll(leftSide, form);
-
-        setCenter(content);
-        refresh();
+        add(tableCard,  BorderLayout.CENTER);
+        add(buildForm(), BorderLayout.EAST);
     }
 
-    private VBox buildForm() {
-        VBox form = new VBox(12);
-        form.setPadding(new Insets(0, 0, 0, 16));
-        form.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-padding: 20;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;");
+    // ════════════════════════════════════════════════════════════════════════
+    // CONSTRUCCION DE UI
+    // ════════════════════════════════════════════════════════════════════════
 
-        Label formTitle = new Label("Datos del Producto");
-        formTitle.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
-        formTitle.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+    private JPanel buildHeader() {
+        JPanel p = new JPanel(new BorderLayout(12, 0));
+        p.setOpaque(false);
+        p.add(MainWindow.pageTitle("Productos"), BorderLayout.WEST);
 
-        nombreField   = fieldWithLabel(form, "Nombre *");
-        precioField   = fieldWithLabel(form, "Precio (S/) *");
-        stockField    = fieldWithLabel(form, "Stock *");
-        categoriaField = fieldWithLabel(form, "Categoria");
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        right.setOpaque(false);
+        fBuscar.setPreferredSize(new Dimension(200, 32));
+        fBuscar.putClientProperty("JTextField.placeholderText", "Buscar...");
+        JButton btnBuscar = MainWindow.actionBtn("Buscar", Config.C_ACCENT);
+        btnBuscar.addActionListener(e -> loadTable(svc.buscar(fBuscar.getText())));
 
-        statusLabel = new Label("");
-        statusLabel.setWrapText(true);
-        statusLabel.setFont(Font.font("Segoe UI", 11));
+        JButton btnTodos = MainWindow.actionBtn("Todos", Config.C_TEXT_MUTED);
+        btnTodos.addActionListener(e -> { fBuscar.setText(""); refresh(); });
 
-        Button guardarBtn = buildBtn("Guardar", Config.C_SUCCESS, "white");
-        Button eliminarBtn = buildBtn("Eliminar", Config.C_ERROR, "white");
-        Button compactarBtn = buildBtn("Compactar", Config.C_WARNING, "white");
-
-        guardarBtn.setMaxWidth(Double.MAX_VALUE);
-        eliminarBtn.setMaxWidth(Double.MAX_VALUE);
-
-        guardarBtn.setOnAction(e -> guardar());
-        eliminarBtn.setOnAction(e -> eliminar());
-        compactarBtn.setOnAction(e -> compactar());
-
-        form.getChildren().addAll(formTitle, guardarBtn, eliminarBtn, compactarBtn, statusLabel);
-        return form;
+        right.add(new JLabel("Buscar:"));
+        right.add(fBuscar);
+        right.add(btnBuscar);
+        right.add(btnTodos);
+        p.add(right, BorderLayout.EAST);
+        return p;
     }
 
-    // ── Acciones ──────────────────────────────────────────────────────────────
+    private JPanel buildForm() {
+        JPanel card = MainWindow.card(new BorderLayout(0, 14));
+        card.setPreferredSize(new Dimension(280, 0));
+
+        JLabel title = new JLabel("Detalle del Producto");
+        title.setFont(new Font("SansSerif", Font.BOLD, 14));
+        title.setForeground(Config.C_TEXT);
+        card.add(title, BorderLayout.NORTH);
+
+        JPanel fields = new JPanel(new GridBagLayout());
+        fields.setOpaque(false);
+        GridBagConstraints gc = new GridBagConstraints();
+        gc.fill = GridBagConstraints.HORIZONTAL;
+        gc.insets = new Insets(4, 0, 4, 0);
+        gc.gridx = 0; gc.weightx = 1;
+
+        addField(fields, gc, "Nombre *",    fNombre,    0);
+        addField(fields, gc, "Precio *",    fPrecio,    1);
+        addField(fields, gc, "Stock *",     fStock,     2);
+        addField(fields, gc, "Categoria",   fCategoria, 3);
+
+        card.add(fields, BorderLayout.CENTER);
+
+        JPanel btns = new JPanel(new GridLayout(2, 2, 8, 8));
+        btns.setOpaque(false);
+
+        JButton btnNuevo    = MainWindow.actionBtn("Nuevo",    Config.C_TEXT_MUTED);
+        JButton btnGuardar  = MainWindow.actionBtn("Guardar",  Config.C_SUCCESS);
+        JButton btnEliminar = MainWindow.actionBtn("Eliminar", Config.C_ERROR);
+        JButton btnCompact  = MainWindow.actionBtn("Compactar", new Color(124, 58, 237));
+
+        btnNuevo.addActionListener(e -> clearForm());
+        btnGuardar.addActionListener(e -> guardar());
+        btnEliminar.addActionListener(e -> eliminar());
+        btnCompact.addActionListener(e -> compactar());
+
+        btns.add(btnNuevo);
+        btns.add(btnGuardar);
+        btns.add(btnEliminar);
+        btns.add(btnCompact);
+
+        JPanel south = new JPanel(new BorderLayout(0, 8));
+        south.setOpaque(false);
+        statusLbl.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        statusLbl.setForeground(Config.C_TEXT_MUTED);
+        south.add(btns,      BorderLayout.NORTH);
+        south.add(statusLbl, BorderLayout.SOUTH);
+
+        card.add(south, BorderLayout.SOUTH);
+        return card;
+    }
+
+    private static void addField(JPanel p, GridBagConstraints gc,
+                                  String label, JTextField field, int row) {
+        gc.gridy = row * 2;
+        JLabel lbl = new JLabel(label);
+        lbl.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        lbl.setForeground(Config.C_TEXT_MUTED);
+        p.add(lbl, gc);
+
+        gc.gridy = row * 2 + 1;
+        field.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        field.setPreferredSize(new Dimension(0, 32));
+        p.add(field, gc);
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // LOGICA
+    // ════════════════════════════════════════════════════════════════════════
+
+    @Override
+    public void refresh() {
+        loadTable(svc.listar());
+    }
+
+    private void loadTable(List<Producto> lista) {
+        tableModel.setRowCount(0);
+        for (Producto p : lista) {
+            tableModel.addRow(new Object[]{
+                p.getId(), p.getNombre(),
+                String.format("S/ %.2f", p.getPrecio()),
+                p.getStock(), p.getCategoria()
+            });
+        }
+        clearForm();
+    }
+
+    private void populateForm() {
+        int row = table.getSelectedRow();
+        if (row < 0) return;
+        int id = (int) tableModel.getValueAt(row, 0);
+        Producto p = svc.obtener(id);
+        if (p == null) return;
+        editingId = p.getId();
+        fNombre.setText(p.getNombre());
+        fPrecio.setText(String.valueOf(p.getPrecio()));
+        fStock.setText(String.valueOf(p.getStock()));
+        fCategoria.setText(p.getCategoria());
+        status(" ", Config.C_TEXT_MUTED);
+    }
 
     private void guardar() {
-        try {
-            String nombre    = nombreField.getText().strip();
-            double precio    = Double.parseDouble(precioField.getText().strip().replace(",", "."));
-            int    stock     = Integer.parseInt(stockField.getText().strip());
-            String categoria = categoriaField.getText().strip();
+        String nombre = fNombre.getText().strip();
+        String precioTxt = fPrecio.getText().strip();
+        String stockTxt  = fStock.getText().strip();
 
-            if (selectedProduct == null) {
-                prodSvc.crear(nombre, precio, stock, categoria);
-                setStatus("Producto creado exitosamente.", Config.C_SUCCESS);
+        if (nombre.isEmpty()) { status("El nombre es obligatorio.", Config.C_ERROR); return; }
+        double precio;
+        int    stock;
+        try { precio = Double.parseDouble(precioTxt); }
+        catch (NumberFormatException ex) { status("Precio invalido.", Config.C_ERROR); return; }
+        try { stock = Integer.parseInt(stockTxt); }
+        catch (NumberFormatException ex) { status("Stock invalido.", Config.C_ERROR); return; }
+
+        String cat = fCategoria.getText().strip();
+        try {
+            if (editingId == 0) {
+                svc.crear(nombre, precio, stock, cat);
+                status("Producto creado.", Config.C_SUCCESS);
             } else {
-                prodSvc.actualizar(selectedProduct.getId(), nombre, precio, stock, categoria);
-                setStatus("Producto actualizado.", Config.C_SUCCESS);
+                svc.actualizar(editingId, nombre, precio, stock, cat);
+                status("Producto actualizado.", Config.C_SUCCESS);
             }
-            limpiarFormulario();
             refresh();
-        } catch (NumberFormatException ex) {
-            setStatus("Error: precio y stock deben ser numeros validos.", Config.C_ERROR);
-        } catch (Exception ex) {
-            setStatus("Error: " + ex.getMessage(), Config.C_ERROR);
+        } catch (IllegalArgumentException ex) {
+            status(ex.getMessage(), Config.C_ERROR);
         }
     }
 
     private void eliminar() {
-        if (selectedProduct == null) { setStatus("Seleccione un producto.", Config.C_WARNING); return; }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-            "¿Eliminar el producto '" + selectedProduct.getNombre() + "'?",
-            ButtonType.YES, ButtonType.NO);
-        confirm.setHeaderText("Confirmar eliminacion");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.YES) {
-                prodSvc.eliminar(selectedProduct.getId());
-                limpiarFormulario();
-                refresh();
-                setStatus("Producto eliminado.", Config.C_SUCCESS);
-            }
-        });
+        if (editingId == 0) { status("Seleccione un producto.", Config.C_WARNING); return; }
+        int ok = JOptionPane.showConfirmDialog(this,
+            "¿Eliminar producto ID=" + editingId + "?", "Confirmar",
+            JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (ok != JOptionPane.YES_OPTION) return;
+        if (svc.eliminar(editingId)) {
+            status("Producto eliminado.", Config.C_SUCCESS);
+            refresh();
+        } else {
+            status("No se pudo eliminar.", Config.C_ERROR);
+        }
     }
 
     private void compactar() {
-        int bytes = prodSvc.compactar();
-        setStatus("Compactacion completada. " + bytes + " bytes recuperados.", Config.C_SUCCESS);
+        int bytes = svc.compactar();
+        status("Compactado: " + bytes + " bytes liberados.", Config.C_ACCENT);
         refresh();
     }
 
-    private void buscar(String termino) {
-        List<Producto> resultados = termino.isBlank()
-            ? prodSvc.listar() : prodSvc.buscar(termino);
-        tabla.setItems(FXCollections.observableArrayList(resultados));
+    private void clearForm() {
+        editingId = 0;
+        fNombre.setText("");
+        fPrecio.setText("");
+        fStock.setText("");
+        fCategoria.setText("");
+        table.clearSelection();
+        status(" ", Config.C_TEXT_MUTED);
     }
 
-    private void cargarEnFormulario(Producto p) {
-        selectedProduct = p;
-        if (p == null) return;
-        nombreField.setText(p.getNombre());
-        precioField.setText(String.format("%.2f", p.getPrecio()));
-        stockField.setText(String.valueOf(p.getStock()));
-        categoriaField.setText(p.getCategoria());
-        statusLabel.setText("");
-    }
-
-    private void limpiarFormulario() {
-        selectedProduct = null;
-        nombreField.clear(); precioField.clear();
-        stockField.clear(); categoriaField.clear();
-        statusLabel.setText("");
-        tabla.getSelectionModel().clearSelection();
-    }
-
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    @Override
-    public void refresh() {
-        tabla.setItems(FXCollections.observableArrayList(prodSvc.listar()));
-    }
-
-    private void setStatus(String msg, String color) {
-        statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: " + color + ";");
-    }
-
-    @FunctionalInterface
-    interface CellValue { String get(TableColumn.CellDataFeatures<Producto, String> cd); }
-
-    private TableColumn<Producto, String> col(String title, int width, CellValue fn) {
-        TableColumn<Producto, String> c = new TableColumn<>(title);
-        c.setCellValueFactory(cd -> new SimpleStringProperty(fn.get(cd)));
-        c.setPrefWidth(width);
-        return c;
-    }
-
-    private TextField fieldWithLabel(VBox parent, String label) {
-        Label lbl = new Label(label);
-        lbl.setFont(Font.font("Segoe UI", 11));
-        lbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
-        TextField field = new TextField();
-        field.setStyle(fieldStyle());
-        parent.getChildren().addAll(lbl, field);
-        return field;
-    }
-
-    private String fieldStyle() {
-        return "-fx-background-color: white;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 6;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8;";
-    }
-
-    private Button buildBtn(String text, String bg, String fg) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: " + bg + ";"
-            + "-fx-text-fill: " + fg + ";"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8 16;"
-            + "-fx-font-weight: bold;"
-            + "-fx-cursor: hand;");
-        btn.setFont(Font.font("Segoe UI", FontWeight.BOLD, 11));
-        return btn;
+    private void status(String msg, Color color) {
+        statusLbl.setText(msg);
+        statusLbl.setForeground(color);
     }
 }

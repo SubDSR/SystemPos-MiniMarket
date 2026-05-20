@@ -7,339 +7,337 @@ import com.minimarket.services.ClienteService;
 import com.minimarket.services.ProductoService;
 import com.minimarket.services.VentaService;
 import com.minimarket.utils.Config;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 
-import java.util.*;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.border.TitledBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
- * Vista POS de Nueva Venta — carrito + busqueda de productos.
- * Equivalente Java de views/ventas_view.py.
+ * Vista de punto de venta (POS).
+ * Panel izquierdo: busqueda de productos.
+ * Panel derecho: carrito + totales + registro.
  */
-public class VentasView extends BorderPane implements MainWindow.Refreshable {
+public class VentasView extends JPanel implements MainWindow.Refreshable {
 
-    private final ProductoService prodSvc  = new ProductoService();
-    private final ClienteService  cliSvc   = new ClienteService();
-    private final VentaService    ventaSvc = new VentaService();
+    private final VentaService    ventaSvc;
+    private final ProductoService productoSvc;
+    private final ClienteService  clienteSvc;
 
-    // Busqueda de productos
-    private TextField buscarField;
-    private ListView<Producto> productosListView;
+    // Panel izquierdo
+    private final JTextField       buscarField   = new JTextField();
+    private final DefaultListModel<String> prodListModel = new DefaultListModel<>();
+    private final JList<String>    prodList      = new JList<>(prodListModel);
+    private final JSpinner         cantSpinner   = new JSpinner(new SpinnerNumberModel(1, 1, 9999, 1));
+    private final List<Producto>   searchResults = new ArrayList<>();
 
-    // Carrito: (Producto, cantidad)
-    private final ObservableList<int[]> carritoItems = FXCollections.observableArrayList();
-    private TableView<int[]> carritoTable;
+    // Panel derecho — carrito
+    private final DefaultTableModel cartModel;
+    private final JTable            cartTable;
+    private final List<int[]>       cartItems    = new ArrayList<>(); // {productoId, cantidad}
 
     // Totales
-    private Label subtotalLabel;
-    private Label igvLabel;
-    private Label totalLabel;
+    private final JLabel lblSubtotal = new JLabel("S/ 0.00");
+    private final JLabel lblIgv      = new JLabel("S/ 0.00");
+    private final JLabel lblTotal    = new JLabel("S/ 0.00");
+    private final JLabel statusLbl   = new JLabel(" ");
 
     // Cliente
-    private ComboBox<String> clienteCombo;
-    private Map<String, Integer> clienteIdMap = new LinkedHashMap<>();
+    private final JComboBox<String> clienteCombo = new JComboBox<>();
+    private final List<Integer>     clienteIds   = new ArrayList<>();
 
-    private Label statusLabel;
+    public VentasView(VentaService ventaSvc, ProductoService productoSvc,
+                      ClienteService clienteSvc) {
+        this.ventaSvc    = ventaSvc;
+        this.productoSvc = productoSvc;
+        this.clienteSvc  = clienteSvc;
 
-    public VentasView() { build(); }
+        setBackground(Config.C_MAIN_BG);
+        setLayout(new BorderLayout(0, 18));
+        setBorder(new EmptyBorder(28, 28, 28, 28));
 
-    @SuppressWarnings("unchecked")
-    private void build() {
-        Label titulo = new Label("Nueva Venta — POS");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        JLabel title = MainWindow.pageTitle("Nueva Venta");
+        add(title, BorderLayout.NORTH);
 
-        // ── Panel izquierdo: busqueda de productos ────────────────────────────
-        VBox leftPanel = buildProductSearchPanel();
-        leftPanel.setPrefWidth(380);
+        // Carrito
+        String[] cols = {"ID", "Producto", "Cant.", "Precio", "Subtotal"};
+        cartModel = new DefaultTableModel(cols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        cartTable = DashboardView.buildTable(cartModel);
+        cartTable.getColumnModel().getColumn(0).setMaxWidth(0);
+        cartTable.getColumnModel().getColumn(0).setMinWidth(0);
+        cartTable.getColumnModel().getColumn(2).setMaxWidth(60);
+        cartTable.getColumnModel().getColumn(3).setMaxWidth(90);
+        cartTable.getColumnModel().getColumn(4).setMaxWidth(90);
 
-        // ── Panel derecho: carrito ────────────────────────────────────────────
-        VBox rightPanel = buildCarritoPanel();
-        HBox.setHgrow(rightPanel, Priority.ALWAYS);
-
-        HBox content = new HBox(16, leftPanel, rightPanel);
-        VBox.setVgrow(content, Priority.ALWAYS);
-
-        VBox main = new VBox(12, titulo, content);
-        VBox.setVgrow(content, Priority.ALWAYS);
-        setCenter(main);
-        refresh();
+        JSplitPane split = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT,
+            buildLeftPanel(), buildRightPanel());
+        split.setDividerLocation(420);
+        split.setDividerSize(6);
+        split.setBorder(null);
+        split.setOpaque(false);
+        add(split, BorderLayout.CENTER);
     }
 
-    private VBox buildProductSearchPanel() {
-        VBox panel = new VBox(10);
-        panel.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-padding: 16;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;");
+    // ════════════════════════════════════════════════════════════════════════
+    // CONSTRUCCION DE UI
+    // ════════════════════════════════════════════════════════════════════════
 
-        Label lbl = new Label("Buscar Producto");
-        lbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
-        lbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+    private JPanel buildLeftPanel() {
+        JPanel p = MainWindow.card(new BorderLayout(0, 12));
 
-        buscarField = new TextField();
-        buscarField.setPromptText("Nombre o categoria...");
-        buscarField.setStyle(fieldStyle());
-        buscarField.textProperty().addListener((obs, old, val) -> filtrarProductos(val));
+        // Busqueda
+        JPanel searchBar = new JPanel(new BorderLayout(6, 0));
+        searchBar.setOpaque(false);
+        buscarField.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        buscarField.setPreferredSize(new Dimension(0, 32));
+        JButton btnBuscar = MainWindow.actionBtn("Buscar", Config.C_ACCENT);
+        btnBuscar.addActionListener(e -> buscarProducto());
+        buscarField.addActionListener(e -> buscarProducto());
+        searchBar.add(new JLabel("Buscar producto:"), BorderLayout.NORTH);
+        searchBar.add(buscarField, BorderLayout.CENTER);
+        searchBar.add(btnBuscar,   BorderLayout.EAST);
 
-        productosListView = new ListView<>();
-        productosListView.setCellFactory(lv -> new ListCell<>() {
-            @Override
-            protected void updateItem(Producto p, boolean empty) {
-                super.updateItem(p, empty);
-                if (empty || p == null) { setText(null); }
-                else {
-                    setText(String.format("[%d] %s  —  S/%.2f  (stock: %d)",
-                        p.getId(), p.getNombre(), p.getPrecio(), p.getStock()));
-                }
-            }
-        });
-        VBox.setVgrow(productosListView, Priority.ALWAYS);
+        // Lista de resultados
+        prodList.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        prodList.setSelectionMode(ListSelectionModel.SINGLE_SELECTION);
+        prodList.setFixedCellHeight(30);
+        JScrollPane scroll = new JScrollPane(prodList);
+        scroll.setBorder(titledBorder("Resultados"));
 
-        // Spinner de cantidad
-        HBox cantRow = new HBox(10);
-        cantRow.setAlignment(Pos.CENTER_LEFT);
-        Label cantLbl = new Label("Cantidad:");
-        cantLbl.setFont(Font.font("Segoe UI", 11));
-        Spinner<Integer> cantSpinner = new Spinner<>(1, 9999, 1);
-        cantSpinner.setPrefWidth(90);
-        cantSpinner.setEditable(true);
+        // Cantidad y agregar
+        JPanel addBar = new JPanel(new BorderLayout(8, 0));
+        addBar.setOpaque(false);
+        JPanel cantPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 0));
+        cantPanel.setOpaque(false);
+        cantPanel.add(new JLabel("Cantidad:"));
+        cantSpinner.setPreferredSize(new Dimension(70, 30));
+        cantPanel.add(cantSpinner);
 
-        Button agregarBtn = buildBtn("Agregar al Carrito", Config.C_ACCENT);
-        agregarBtn.setMaxWidth(Double.MAX_VALUE);
-        agregarBtn.setOnAction(e -> {
-            Producto sel = productosListView.getSelectionModel().getSelectedItem();
-            if (sel == null) return;
-            int cant = cantSpinner.getValue();
-            agregarAlCarrito(sel, cant);
-        });
+        JButton btnAgregar = MainWindow.actionBtn("Agregar al carrito", Config.C_SUCCESS);
+        btnAgregar.addActionListener(e -> agregarAlCarrito());
+        addBar.add(cantPanel,   BorderLayout.CENTER);
+        addBar.add(btnAgregar,  BorderLayout.EAST);
 
-        cantRow.getChildren().addAll(cantLbl, cantSpinner);
-        panel.getChildren().addAll(lbl, buscarField, productosListView, cantRow, agregarBtn);
-        return panel;
+        p.add(searchBar, BorderLayout.NORTH);
+        p.add(scroll,    BorderLayout.CENTER);
+        p.add(addBar,    BorderLayout.SOUTH);
+        return p;
     }
 
-    @SuppressWarnings("unchecked")
-    private VBox buildCarritoPanel() {
-        VBox panel = new VBox(12);
-        panel.setStyle("-fx-background-color: " + Config.C_CARD_BG + ";"
-            + "-fx-background-radius: 10;"
-            + "-fx-padding: 16;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 10;");
+    private JPanel buildRightPanel() {
+        JPanel p = MainWindow.card(new BorderLayout(0, 12));
 
-        Label carritoLbl = new Label("Carrito de Venta");
-        carritoLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 13));
-        carritoLbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+        // Carrito
+        JScrollPane scroll = new JScrollPane(cartTable);
+        scroll.setBorder(titledBorder("Carrito de Compras"));
 
-        // Tabla del carrito
-        carritoTable = new TableView<>();
-        carritoTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        carritoTable.setPlaceholder(new Label("Carrito vacio"));
-        VBox.setVgrow(carritoTable, Priority.ALWAYS);
+        JButton btnEliminar = MainWindow.actionBtn("Quitar seleccionado", Config.C_ERROR);
+        btnEliminar.addActionListener(e -> quitarDelCarrito());
 
-        TableColumn<int[], String> prodCol = new TableColumn<>("Producto");
-        prodCol.setCellValueFactory(cd -> {
-            Producto p = prodSvc.obtener(cd.getValue()[0]);
-            return new SimpleStringProperty(p != null ? p.getNombre() : "?");
-        });
-        TableColumn<int[], String> cantCol = new TableColumn<>("Cant.");
-        cantCol.setCellValueFactory(cd -> new SimpleStringProperty(String.valueOf(cd.getValue()[1])));
-        cantCol.setPrefWidth(60);
-        TableColumn<int[], String> precCol = new TableColumn<>("P.Unit");
-        precCol.setCellValueFactory(cd -> {
-            Producto p = prodSvc.obtener(cd.getValue()[0]);
-            return new SimpleStringProperty(p != null ? String.format("S/%.2f", p.getPrecio()) : "");
-        });
-        TableColumn<int[], String> subCol = new TableColumn<>("Subtotal");
-        subCol.setCellValueFactory(cd -> {
-            Producto p = prodSvc.obtener(cd.getValue()[0]);
-            if (p == null) return new SimpleStringProperty("");
-            double sub = p.getPrecio() * cd.getValue()[1];
-            return new SimpleStringProperty(String.format("S/%.2f", sub));
-        });
-
-        carritoTable.getColumns().addAll(prodCol, cantCol, precCol, subCol);
-        carritoTable.setItems(carritoItems);
-
-        Button quitarBtn = buildBtn("Quitar Seleccionado", Config.C_ERROR);
-        quitarBtn.setOnAction(e -> {
-            int[] sel = carritoTable.getSelectionModel().getSelectedItem();
-            if (sel != null) { carritoItems.remove(sel); recalcularTotales(); }
-        });
-
-        Button limpiarBtn = buildBtn("Limpiar Carrito", Config.C_WARNING);
-        limpiarBtn.setOnAction(e -> { carritoItems.clear(); recalcularTotales(); });
-
-        HBox cartBtns = new HBox(8, quitarBtn, limpiarBtn);
+        JPanel cartPanel = new JPanel(new BorderLayout(0, 6));
+        cartPanel.setOpaque(false);
+        cartPanel.add(scroll,       BorderLayout.CENTER);
+        cartPanel.add(btnEliminar,  BorderLayout.SOUTH);
 
         // Totales
-        VBox totalesBox = buildTotalesBox();
+        JPanel totalesPanel = buildTotalesPanel();
 
-        // Selector de cliente
-        VBox clienteBox = buildClienteBox();
+        // Cliente + acciones
+        JPanel bottomPanel = new JPanel(new BorderLayout(0, 10));
+        bottomPanel.setOpaque(false);
+        bottomPanel.add(totalesPanel, BorderLayout.NORTH);
+        bottomPanel.add(buildAcciones(), BorderLayout.SOUTH);
 
-        statusLabel = new Label("");
-        statusLabel.setWrapText(true);
-        statusLabel.setFont(Font.font("Segoe UI", 12));
-
-        Button registrarBtn = buildBtn("REGISTRAR VENTA", Config.C_SUCCESS);
-        registrarBtn.setMaxWidth(Double.MAX_VALUE);
-        registrarBtn.setFont(Font.font("Segoe UI", FontWeight.BOLD, 14));
-        registrarBtn.setStyle(registrarBtn.getStyle() + "-fx-padding: 12;");
-        registrarBtn.setOnAction(e -> registrarVenta());
-
-        panel.getChildren().addAll(carritoLbl, carritoTable, cartBtns,
-            totalesBox, clienteBox, statusLabel, registrarBtn);
-        return panel;
+        p.add(cartPanel,    BorderLayout.CENTER);
+        p.add(bottomPanel,  BorderLayout.SOUTH);
+        return p;
     }
 
-    private VBox buildTotalesBox() {
-        VBox box = new VBox(6);
-        box.setStyle("-fx-background-color: " + Config.C_MAIN_BG + ";"
-            + "-fx-padding: 12;"
-            + "-fx-background-radius: 8;");
+    private JPanel buildTotalesPanel() {
+        JPanel p = new JPanel(new GridLayout(3, 2, 0, 4));
+        p.setBackground(new Color(248, 250, 252));
+        p.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(Config.C_BORDER, 1),
+            new EmptyBorder(10, 14, 10, 14)
+        ));
 
-        subtotalLabel = new Label("Subtotal:  S/0.00");
-        igvLabel      = new Label("IGV (18%): S/0.00");
-        totalLabel    = new Label("TOTAL:     S/0.00");
+        Font labelFont = new Font("SansSerif", Font.PLAIN, 13);
+        Font valueFont = new Font("SansSerif", Font.BOLD, 13);
 
-        subtotalLabel.setFont(Font.font("Segoe UI", 12));
-        igvLabel.setFont(Font.font("Segoe UI", 12));
-        totalLabel.setFont(Font.font("Segoe UI", FontWeight.BOLD, 15));
-        totalLabel.setStyle("-fx-text-fill: " + Config.C_ACCENT + ";");
+        JLabel lSub = new JLabel("Subtotal:");      lSub.setFont(labelFont);
+        JLabel lIgv = new JLabel("IGV (18%):");     lIgv.setFont(labelFont);
+        JLabel lTot = new JLabel("TOTAL:");         lTot.setFont(new Font("SansSerif", Font.BOLD, 15));
 
-        box.getChildren().addAll(subtotalLabel, igvLabel, new Separator(), totalLabel);
-        return box;
+        lblSubtotal.setFont(valueFont); lblSubtotal.setHorizontalAlignment(SwingConstants.RIGHT);
+        lblIgv.setFont(valueFont);      lblIgv.setHorizontalAlignment(SwingConstants.RIGHT);
+        lblTotal.setFont(new Font("SansSerif", Font.BOLD, 16));
+        lblTotal.setForeground(Config.C_SUCCESS);
+        lblTotal.setHorizontalAlignment(SwingConstants.RIGHT);
+
+        p.add(lSub); p.add(lblSubtotal);
+        p.add(lIgv); p.add(lblIgv);
+        p.add(lTot); p.add(lblTotal);
+        return p;
     }
 
-    private VBox buildClienteBox() {
-        VBox box = new VBox(6);
-        Label lbl = new Label("Cliente (opcional):");
-        lbl.setFont(Font.font("Segoe UI", 11));
-        lbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+    private JPanel buildAcciones() {
+        JPanel p = new JPanel(new BorderLayout(0, 8));
+        p.setOpaque(false);
 
-        clienteCombo = new ComboBox<>();
-        clienteCombo.setMaxWidth(Double.MAX_VALUE);
-        clienteCombo.setStyle(fieldStyle());
+        // Cliente
+        JPanel cliPanel = new JPanel(new BorderLayout(6, 0));
+        cliPanel.setOpaque(false);
+        JLabel cliLabel = new JLabel("Cliente (opcional):");
+        cliLabel.setFont(new Font("SansSerif", Font.PLAIN, 12));
+        clienteCombo.setFont(new Font("SansSerif", Font.PLAIN, 13));
+        cliPanel.add(cliLabel,    BorderLayout.NORTH);
+        cliPanel.add(clienteCombo, BorderLayout.CENTER);
 
-        box.getChildren().addAll(lbl, clienteCombo);
-        return box;
+        // Botones
+        JPanel btns = new JPanel(new GridLayout(1, 2, 10, 0));
+        btns.setOpaque(false);
+        JButton btnRegistrar = MainWindow.actionBtn("Registrar Venta", Config.C_SUCCESS);
+        JButton btnLimpiar   = MainWindow.actionBtn("Limpiar",         Config.C_TEXT_MUTED);
+        btnRegistrar.addActionListener(e -> registrarVenta());
+        btnLimpiar.addActionListener(e   -> limpiarCarrito());
+        btns.add(btnRegistrar);
+        btns.add(btnLimpiar);
+
+        statusLbl.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        statusLbl.setHorizontalAlignment(SwingConstants.CENTER);
+
+        p.add(cliPanel, BorderLayout.NORTH);
+        p.add(btns,     BorderLayout.CENTER);
+        p.add(statusLbl, BorderLayout.SOUTH);
+        return p;
     }
 
-    // ── Logica de negocio ─────────────────────────────────────────────────────
-
-    private void filtrarProductos(String termino) {
-        List<Producto> lista = termino.isBlank()
-            ? prodSvc.listar() : prodSvc.buscar(termino);
-        productosListView.setItems(FXCollections.observableArrayList(lista));
-    }
-
-    private void agregarAlCarrito(Producto prod, int cantidad) {
-        // Verificar si ya esta en el carrito
-        for (int[] item : carritoItems) {
-            if (item[0] == prod.getId()) {
-                item[1] += cantidad;
-                carritoTable.refresh();
-                recalcularTotales();
-                return;
-            }
-        }
-        carritoItems.add(new int[]{prod.getId(), cantidad});
-        recalcularTotales();
-    }
-
-    private void recalcularTotales() {
-        double subtotal = 0;
-        for (int[] item : carritoItems) {
-            Producto p = prodSvc.obtener(item[0]);
-            if (p != null) subtotal += p.getPrecio() * item[1];
-        }
-        subtotal = Math.round(subtotal * 100.0) / 100.0;
-        double igv   = Math.round(subtotal * Config.IGV_RATE * 100.0) / 100.0;
-        double total = Math.round((subtotal + igv) * 100.0) / 100.0;
-
-        subtotalLabel.setText(String.format("Subtotal:  S/%.2f", subtotal));
-        igvLabel.setText(String.format("IGV (18%): S/%.2f", igv));
-        totalLabel.setText(String.format("TOTAL:     S/%.2f", total));
-    }
-
-    private void registrarVenta() {
-        if (carritoItems.isEmpty()) {
-            setStatus("El carrito esta vacio.", Config.C_WARNING);
-            return;
-        }
-
-        List<int[]> items = new ArrayList<>(carritoItems);
-        int clienteId = 0;
-        String clienteSel = clienteCombo.getValue();
-        if (clienteSel != null && clienteIdMap.containsKey(clienteSel)) {
-            clienteId = clienteIdMap.get(clienteSel);
-        }
-
-        Venta venta = ventaSvc.crearVenta(items, clienteId);
-        if (venta != null) {
-            carritoItems.clear();
-            recalcularTotales();
-            setStatus(String.format("Venta #%d registrada. Total: S/%.2f",
-                venta.getId(), venta.getTotal()), Config.C_SUCCESS);
-        } else {
-            setStatus("No se pudo registrar la venta. Verifique el stock disponible.", Config.C_ERROR);
-        }
-    }
-
-    private void setStatus(String msg, String color) {
-        statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: " + color + ";");
-    }
-
-    // ── Refresh ───────────────────────────────────────────────────────────────
+    // ════════════════════════════════════════════════════════════════════════
+    // LOGICA
+    // ════════════════════════════════════════════════════════════════════════
 
     @Override
     public void refresh() {
-        filtrarProductos(buscarField != null ? buscarField.getText() : "");
+        cargarClientes();
+    }
 
-        // Actualizar combo de clientes
-        clienteIdMap.clear();
-        List<String> clienteOptions = new ArrayList<>();
-        clienteOptions.add("-- Sin cliente (anonimo) --");
-        for (Cliente c : cliSvc.listar()) {
-            String label = c.getNombre() + " (" + c.getDni() + ")";
-            clienteOptions.add(label);
-            clienteIdMap.put(label, c.getId());
-        }
-        if (clienteCombo != null) {
-            clienteCombo.setItems(FXCollections.observableArrayList(clienteOptions));
-            clienteCombo.setValue(clienteOptions.get(0));
+    private void cargarClientes() {
+        clienteCombo.removeAllItems();
+        clienteIds.clear();
+        clienteCombo.addItem("— Sin cliente —");
+        clienteIds.add(0);
+        for (Cliente c : clienteSvc.listar()) {
+            clienteCombo.addItem(c.getNombre() + " (" + c.getDni() + ")");
+            clienteIds.add(c.getId());
         }
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    private String fieldStyle() {
-        return "-fx-background-color: white;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 6;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 7;";
+    private void buscarProducto() {
+        String txt = buscarField.getText().strip();
+        searchResults.clear();
+        prodListModel.clear();
+        List<Producto> res = txt.isEmpty() ? productoSvc.listar() : productoSvc.buscar(txt);
+        for (Producto p : res) {
+            searchResults.add(p);
+            prodListModel.addElement(
+                String.format("[%d] %s — S/%.2f (stock: %d)", p.getId(), p.getNombre(), p.getPrecio(), p.getStock()));
+        }
     }
 
-    private Button buildBtn(String text, String bg) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: " + bg + ";"
-            + "-fx-text-fill: white;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8 16;"
-            + "-fx-font-weight: bold;"
-            + "-fx-cursor: hand;");
-        return btn;
+    private void agregarAlCarrito() {
+        int idx = prodList.getSelectedIndex();
+        if (idx < 0) { status("Seleccione un producto de la lista.", Config.C_WARNING); return; }
+        Producto prod = searchResults.get(idx);
+        int cant = (int) cantSpinner.getValue();
+
+        // Verificar si ya esta en el carrito
+        for (int[] item : cartItems) {
+            if (item[0] == prod.getId()) {
+                int nuevaCant = item[1] + cant;
+                if (prod.getStock() < nuevaCant) {
+                    status("Stock insuficiente. Disponible: " + prod.getStock(), Config.C_ERROR);
+                    return;
+                }
+                item[1] = nuevaCant;
+                refreshCart();
+                return;
+            }
+        }
+        if (prod.getStock() < cant) {
+            status("Stock insuficiente. Disponible: " + prod.getStock(), Config.C_ERROR);
+            return;
+        }
+        cartItems.add(new int[]{prod.getId(), cant});
+        refreshCart();
+        status(" ", Config.C_TEXT_MUTED);
+    }
+
+    private void quitarDelCarrito() {
+        int row = cartTable.getSelectedRow();
+        if (row < 0) return;
+        cartItems.remove(row);
+        refreshCart();
+    }
+
+    private void refreshCart() {
+        cartModel.setRowCount(0);
+        double subtotalSum = 0;
+        for (int[] item : cartItems) {
+            Producto p = productoSvc.obtener(item[0]);
+            if (p == null) continue;
+            double sub = Math.round(p.getPrecio() * item[1] * 100.0) / 100.0;
+            subtotalSum += sub;
+            cartModel.addRow(new Object[]{
+                p.getId(), p.getNombre(), item[1],
+                String.format("S/ %.2f", p.getPrecio()),
+                String.format("S/ %.2f", sub)
+            });
+        }
+        subtotalSum = Math.round(subtotalSum * 100.0) / 100.0;
+        double igv   = Math.round(subtotalSum * Config.IGV_RATE * 100.0) / 100.0;
+        double total = Math.round((subtotalSum + igv) * 100.0) / 100.0;
+        lblSubtotal.setText(String.format("S/ %.2f", subtotalSum));
+        lblIgv.setText(String.format("S/ %.2f", igv));
+        lblTotal.setText(String.format("S/ %.2f", total));
+    }
+
+    private void registrarVenta() {
+        if (cartItems.isEmpty()) { status("El carrito esta vacio.", Config.C_WARNING); return; }
+        int clienteIdx = clienteCombo.getSelectedIndex();
+        int clienteId  = clienteIds.isEmpty() ? 0 : clienteIds.get(clienteIdx);
+
+        Venta v = ventaSvc.crearVenta(cartItems, clienteId);
+        if (v == null) {
+            status("Error al registrar la venta. Verifique el stock.", Config.C_ERROR);
+        } else {
+            status("Venta #" + v.getId() + " registrada. Total: " +
+                String.format("S/ %.2f", v.getTotal()), Config.C_SUCCESS);
+            limpiarCarrito();
+            buscarProducto();
+        }
+    }
+
+    private void limpiarCarrito() {
+        cartItems.clear();
+        refreshCart();
+        status(" ", Config.C_TEXT_MUTED);
+    }
+
+    private void status(String msg, Color color) {
+        statusLbl.setText(msg);
+        statusLbl.setForeground(color);
+    }
+
+    private static TitledBorder titledBorder(String title) {
+        TitledBorder b = BorderFactory.createTitledBorder(
+            BorderFactory.createLineBorder(Config.C_BORDER), title);
+        b.setTitleFont(new Font("SansSerif", Font.BOLD, 12));
+        b.setTitleColor(Config.C_TEXT_MUTED);
+        return b;
     }
 }

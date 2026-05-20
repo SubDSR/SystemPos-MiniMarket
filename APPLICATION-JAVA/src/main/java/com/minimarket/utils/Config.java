@@ -105,22 +105,23 @@ public final class Config {
     public static final String RUC         = "20123456789";
 
     // ════════════════════════════════════════════════════════════════════════
-    // COLORES (equivalentes CSS para JavaFX)
+    // COLORES (java.awt.Color para Swing)
     // ════════════════════════════════════════════════════════════════════════
 
-    public static final String C_SIDEBAR_BG    = "#1e293b";
-    public static final String C_SIDEBAR_FG    = "#cbd5e1";
-    public static final String C_SIDEBAR_HOVER = "#334155";
-    public static final String C_ACTIVE_BTN    = "#3b82f6";
-    public static final String C_MAIN_BG       = "#f1f5f9";
-    public static final String C_CARD_BG       = "#ffffff";
-    public static final String C_ACCENT        = "#3b82f6";
-    public static final String C_SUCCESS       = "#22c55e";
-    public static final String C_ERROR         = "#ef4444";
-    public static final String C_WARNING       = "#f59e0b";
-    public static final String C_TEXT          = "#0f172a";
-    public static final String C_TEXT_MUTED    = "#64748b";
-    public static final String C_BORDER        = "#e2e8f0";
+    public static final java.awt.Color C_SIDEBAR_BG    = new java.awt.Color(15,  23,  42);
+    public static final java.awt.Color C_SIDEBAR_NAV   = new java.awt.Color(30,  41,  59);
+    public static final java.awt.Color C_SIDEBAR_FG    = new java.awt.Color(203, 213, 225);
+    public static final java.awt.Color C_SIDEBAR_HOVER = new java.awt.Color(51,  65,  85);
+    public static final java.awt.Color C_ACTIVE_BTN    = new java.awt.Color(59,  130, 246);
+    public static final java.awt.Color C_MAIN_BG       = new java.awt.Color(241, 245, 249);
+    public static final java.awt.Color C_CARD_BG       = java.awt.Color.WHITE;
+    public static final java.awt.Color C_ACCENT        = new java.awt.Color(59,  130, 246);
+    public static final java.awt.Color C_SUCCESS       = new java.awt.Color(34,  197, 94);
+    public static final java.awt.Color C_ERROR         = new java.awt.Color(239, 68,  68);
+    public static final java.awt.Color C_WARNING       = new java.awt.Color(245, 158, 11);
+    public static final java.awt.Color C_TEXT          = new java.awt.Color(15,  23,  42);
+    public static final java.awt.Color C_TEXT_MUTED    = new java.awt.Color(100, 116, 139);
+    public static final java.awt.Color C_BORDER        = new java.awt.Color(226, 232, 240);
 
     private Config() { }
 

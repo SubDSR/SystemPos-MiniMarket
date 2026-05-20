@@ -6,231 +6,185 @@ import com.minimarket.models.Venta;
 import com.minimarket.services.ProductoService;
 import com.minimarket.services.VentaService;
 import com.minimarket.utils.Config;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.collections.FXCollections;
-import javafx.geometry.Insets;
-import javafx.geometry.Pos;
-import javafx.scene.control.*;
-import javafx.scene.layout.*;
-import javafx.scene.text.Font;
-import javafx.scene.text.FontWeight;
 
-import java.util.Comparator;
+import javax.swing.*;
+import javax.swing.border.EmptyBorder;
+import javax.swing.table.DefaultTableModel;
+import java.awt.*;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
- * Vista de Historial de Ventas.
- * Permite filtrar por fecha, ver detalles y anular ventas.
- * Equivalente Java de views/historial_view.py.
+ * Vista del historial de ventas.
+ * Tabla superior: ventas (con filtro por fecha).
+ * Tabla inferior: detalles de la venta seleccionada.
  */
-public class HistorialView extends BorderPane implements MainWindow.Refreshable {
+public class HistorialView extends JPanel implements MainWindow.Refreshable {
 
-    private final VentaService    ventaSvc = new VentaService();
-    private final ProductoService prodSvc  = new ProductoService();
+    private final VentaService    ventaSvc;
+    private final ProductoService productoSvc;
 
-    private TableView<Venta>        ventasTable;
-    private TableView<DetalleVenta> detallesTable;
-    private TextField               filtroFechaField;
-    private Label                   statusLabel;
-    private Label                   resumenLabel;
+    private final DefaultTableModel ventasModel;
+    private final JTable            ventasTable;
+    private final DefaultTableModel detModel;
+    private final JTable            detTable;
 
-    public HistorialView() { build(); }
+    private final JTextField fFecha  = new JTextField(12);
+    private final JLabel     statusLbl = new JLabel(" ");
 
-    @SuppressWarnings("unchecked")
-    private void build() {
-        // ── Titulo y filtro ───────────────────────────────────────────────────
-        HBox toolbar = new HBox(12);
-        toolbar.setAlignment(Pos.CENTER_LEFT);
-        toolbar.setPadding(new Insets(0, 0, 12, 0));
+    private List<Venta> ventasActuales = List.of();
 
-        Label titulo = new Label("Historial de Ventas");
-        titulo.setFont(Font.font("Segoe UI", FontWeight.BOLD, 18));
-        titulo.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
+    public HistorialView(VentaService ventaSvc, ProductoService productoSvc) {
+        this.ventaSvc    = ventaSvc;
+        this.productoSvc = productoSvc;
 
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
+        setBackground(Config.C_MAIN_BG);
+        setLayout(new BorderLayout(0, 18));
+        setBorder(new EmptyBorder(28, 28, 28, 28));
 
-        Label filtroLbl = new Label("Filtrar fecha:");
-        filtroLbl.setFont(Font.font("Segoe UI", 11));
-        filtroFechaField = new TextField();
-        filtroFechaField.setPromptText("ej. 2026-05-19");
-        filtroFechaField.setPrefWidth(140);
-        filtroFechaField.setStyle(fieldStyle());
-        filtroFechaField.textProperty().addListener((obs, old, val) -> filtrarPorFecha(val));
+        add(buildHeader(), BorderLayout.NORTH);
 
-        Button todosBtn = buildBtn("Mostrar Todas", Config.C_ACCENT);
-        todosBtn.setOnAction(e -> { filtroFechaField.clear(); refresh(); });
-
-        toolbar.getChildren().addAll(titulo, spacer, filtroLbl, filtroFechaField, todosBtn);
-
-        // ── Tabla de ventas ───────────────────────────────────────────────────
-        ventasTable = new TableView<>();
-        ventasTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        ventasTable.setPlaceholder(new Label("No hay ventas"));
-
-        ventasTable.getColumns().addAll(
-            ventaCol("ID",       55,  cd -> String.valueOf(cd.getValue().getId())),
-            ventaCol("Fecha",    150, cd -> cd.getValue().getFecha()),
-            ventaCol("Cliente",  90,  cd -> cd.getValue().getClienteId() == 0
-                ? "Anonimo" : "ID:" + cd.getValue().getClienteId()),
-            ventaCol("Subtotal", 90,  cd -> String.format("S/%.2f", cd.getValue().getSubtotal())),
-            ventaCol("IGV",      80,  cd -> String.format("S/%.2f", cd.getValue().getIgv())),
-            ventaCol("Total",    90,  cd -> String.format("S/%.2f", cd.getValue().getTotal()))
-        );
-
-        ventasTable.getSelectionModel().selectedItemProperty()
-            .addListener((obs, old, sel) -> mostrarDetalles(sel));
-
-        // ── Tabla de detalles ─────────────────────────────────────────────────
-        Label detalleLbl = new Label("Detalle de la venta seleccionada:");
-        detalleLbl.setFont(Font.font("Segoe UI", FontWeight.BOLD, 12));
-        detalleLbl.setStyle("-fx-text-fill: " + Config.C_TEXT + ";");
-
-        detallesTable = new TableView<>();
-        detallesTable.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY);
-        detallesTable.setPrefHeight(180);
-        detallesTable.setPlaceholder(new Label("Seleccione una venta"));
-
-        detallesTable.getColumns().addAll(
-            detalleCol("Producto",  180, cd -> {
-                Producto p = prodSvc.obtener(cd.getValue().getProductoId());
-                return p != null ? p.getNombre() : "ID:" + cd.getValue().getProductoId();
-            }),
-            detalleCol("Cantidad",  70,  cd -> String.valueOf(cd.getValue().getCantidad())),
-            detalleCol("P.Unit",    90,  cd -> String.format("S/%.2f", cd.getValue().getPrecioUnitario())),
-            detalleCol("Subtotal",  90,  cd -> String.format("S/%.2f", cd.getValue().getSubtotal()))
-        );
-
-        // ── Panel de acciones ─────────────────────────────────────────────────
-        resumenLabel = new Label("");
-        resumenLabel.setFont(Font.font("Segoe UI", 12));
-        resumenLabel.setStyle("-fx-text-fill: " + Config.C_TEXT_MUTED + ";");
-
-        statusLabel = new Label("");
-        statusLabel.setFont(Font.font("Segoe UI", 12));
-
-        Button anularBtn = buildBtn("Anular Venta Seleccionada", Config.C_ERROR);
-        anularBtn.setOnAction(e -> anularVenta());
-
-        Button refrescarBtn = buildBtn("Actualizar", Config.C_ACCENT);
-        refrescarBtn.setOnAction(e -> refresh());
-
-        HBox btnRow = new HBox(10, anularBtn, refrescarBtn);
-
-        VBox tableSection = new VBox(6, ventasTable);
-        VBox.setVgrow(ventasTable, Priority.ALWAYS);
-        VBox detalleSection = new VBox(8, detalleLbl, detallesTable);
-
-        VBox main = new VBox(12, toolbar, tableSection, detalleSection,
-            resumenLabel, btnRow, statusLabel);
-        VBox.setVgrow(tableSection, Priority.ALWAYS);
-
-        setCenter(main);
-        refresh();
-    }
-
-    // ── Logica ────────────────────────────────────────────────────────────────
-
-    private void filtrarPorFecha(String fecha) {
-        if (fecha == null || fecha.isBlank()) { refresh(); return; }
-        List<Venta> filtradas = ventaSvc.listarVentas().stream()
-            .filter(v -> v.getFecha().startsWith(fecha.strip()))
-            .sorted(Comparator.comparingInt(Venta::getId).reversed())
-            .collect(Collectors.toList());
-        ventasTable.setItems(FXCollections.observableArrayList(filtradas));
-        actualizarResumen(filtradas);
-    }
-
-    private void mostrarDetalles(Venta venta) {
-        if (venta == null) { detallesTable.setItems(FXCollections.emptyObservableList()); return; }
-        detallesTable.setItems(FXCollections.observableArrayList(
-            ventaSvc.obtenerDetalles(venta.getId())));
-    }
-
-    private void anularVenta() {
-        Venta sel = ventasTable.getSelectionModel().getSelectedItem();
-        if (sel == null) { setStatus("Seleccione una venta.", Config.C_WARNING); return; }
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
-            String.format("¿Anular la venta #%d del %s (Total: S/%.2f)?",
-                sel.getId(), sel.getFecha(), sel.getTotal()),
-            ButtonType.YES, ButtonType.NO);
-        confirm.setHeaderText("Confirmar anulacion");
-        confirm.showAndWait().ifPresent(btn -> {
-            if (btn == ButtonType.YES) {
-                boolean ok = ventaSvc.anularVenta(sel.getId());
-                if (ok) {
-                    setStatus("Venta #" + sel.getId() + " anulada. Stock restaurado.", Config.C_SUCCESS);
-                    refresh();
-                } else {
-                    setStatus("No se pudo anular la venta.", Config.C_ERROR);
-                }
-            }
+        // Tabla de ventas
+        String[] vCols = {"ID", "Fecha", "Cliente", "Subtotal", "IGV", "Total", "Estado"};
+        ventasModel = new DefaultTableModel(vCols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        ventasTable = DashboardView.buildTable(ventasModel);
+        ventasTable.getColumnModel().getColumn(0).setMaxWidth(55);
+        ventasTable.getColumnModel().getColumn(2).setMaxWidth(90);
+        ventasTable.getSelectionModel().addListSelectionListener(e -> {
+            if (!e.getValueIsAdjusting()) cargarDetalles();
         });
+
+        JScrollPane vScroll = new JScrollPane(ventasTable);
+        vScroll.setBorder(BorderFactory.createEmptyBorder());
+        JPanel ventasCard = MainWindow.card(new BorderLayout(0, 6));
+        ventasCard.add(MainWindow.sectionLabel("Ventas"), BorderLayout.NORTH);
+        ventasCard.add(vScroll, BorderLayout.CENTER);
+
+        // Tabla de detalles
+        String[] dCols = {"ID Det.", "Producto", "Cantidad", "Precio Unit.", "Subtotal"};
+        detModel = new DefaultTableModel(dCols, 0) {
+            @Override public boolean isCellEditable(int r, int c) { return false; }
+        };
+        detTable = DashboardView.buildTable(detModel);
+        detTable.getColumnModel().getColumn(0).setMaxWidth(60);
+        detTable.getColumnModel().getColumn(2).setMaxWidth(80);
+
+        JScrollPane dScroll = new JScrollPane(detTable);
+        dScroll.setBorder(BorderFactory.createEmptyBorder());
+        JPanel detCard = MainWindow.card(new BorderLayout(0, 6));
+        detCard.add(MainWindow.sectionLabel("Detalle de Venta Seleccionada"), BorderLayout.NORTH);
+        detCard.add(dScroll, BorderLayout.CENTER);
+
+        JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, ventasCard, detCard);
+        split.setDividerLocation(340);
+        split.setDividerSize(6);
+        split.setBorder(null);
+        split.setOpaque(false);
+        add(split, BorderLayout.CENTER);
     }
 
-    private void actualizarResumen(List<Venta> ventas) {
-        double total = ventas.stream().mapToDouble(Venta::getTotal).sum();
-        resumenLabel.setText(String.format("%d venta(s)  |  Total acumulado: S/%.2f",
-            ventas.size(), total));
-    }
+    private JPanel buildHeader() {
+        JPanel p = new JPanel(new BorderLayout(12, 0));
+        p.setOpaque(false);
+        p.add(MainWindow.pageTitle("Historial de Ventas"), BorderLayout.WEST);
 
-    private void setStatus(String msg, String color) {
-        statusLabel.setText(msg);
-        statusLabel.setStyle("-fx-text-fill: " + color + ";");
+        JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
+        right.setOpaque(false);
+        fFecha.setFont(new Font("SansSerif", Font.PLAIN, 13));
+
+        JButton btnFiltrar  = MainWindow.actionBtn("Filtrar",  Config.C_ACCENT);
+        JButton btnTodas    = MainWindow.actionBtn("Todas",    Config.C_TEXT_MUTED);
+        JButton btnAnular   = MainWindow.actionBtn("Anular Venta", Config.C_ERROR);
+
+        btnFiltrar.addActionListener(e  -> filtrar());
+        btnTodas.addActionListener(e    -> { fFecha.setText(""); refresh(); });
+        btnAnular.addActionListener(e   -> anular());
+
+        right.add(new JLabel("Fecha (yyyy-MM-dd):"));
+        right.add(fFecha);
+        right.add(btnFiltrar);
+        right.add(btnTodas);
+        right.add(btnAnular);
+
+        statusLbl.setFont(new Font("SansSerif", Font.PLAIN, 11));
+        right.add(statusLbl);
+
+        p.add(right, BorderLayout.EAST);
+        return p;
     }
 
     @Override
     public void refresh() {
-        List<Venta> ventas = ventaSvc.listarVentas().stream()
-            .sorted(Comparator.comparingInt(Venta::getId).reversed())
-            .collect(Collectors.toList());
-        ventasTable.setItems(FXCollections.observableArrayList(ventas));
-        detallesTable.setItems(FXCollections.emptyObservableList());
-        actualizarResumen(ventas);
+        ventasActuales = ventaSvc.listarVentas();
+        loadVentasTable(ventasActuales);
+        detModel.setRowCount(0);
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
-
-    @FunctionalInterface
-    interface VentaCellValue { String get(TableColumn.CellDataFeatures<Venta, String> cd); }
-
-    @SuppressWarnings("unchecked")
-    private TableColumn<Venta, String> ventaCol(String title, int width, VentaCellValue fn) {
-        TableColumn<Venta, String> c = new TableColumn<>(title);
-        c.setCellValueFactory(cd -> new SimpleStringProperty(fn.get(cd)));
-        c.setPrefWidth(width);
-        return c;
+    private void filtrar() {
+        String fecha = fFecha.getText().strip();
+        if (fecha.isEmpty()) { refresh(); return; }
+        ventasActuales = ventaSvc.listarVentas().stream()
+            .filter(v -> v.getFecha().startsWith(fecha))
+            .toList();
+        loadVentasTable(ventasActuales);
+        detModel.setRowCount(0);
     }
 
-    @FunctionalInterface
-    interface DetalleCellValue { String get(TableColumn.CellDataFeatures<DetalleVenta, String> cd); }
-
-    @SuppressWarnings("unchecked")
-    private TableColumn<DetalleVenta, String> detalleCol(String title, int width, DetalleCellValue fn) {
-        TableColumn<DetalleVenta, String> c = new TableColumn<>(title);
-        c.setCellValueFactory(cd -> new SimpleStringProperty(fn.get(cd)));
-        c.setPrefWidth(width);
-        return c;
+    private void loadVentasTable(List<Venta> lista) {
+        ventasModel.setRowCount(0);
+        for (Venta v : lista) {
+            ventasModel.addRow(new Object[]{
+                v.getId(), v.getFecha(),
+                v.getClienteId() == 0 ? "—" : "C#" + v.getClienteId(),
+                String.format("S/ %.2f", v.getSubtotal()),
+                String.format("S/ %.2f", v.getIgv()),
+                String.format("S/ %.2f", v.getTotal()),
+                v.getEstado() == 1 ? "Activa" : "Anulada"
+            });
+        }
     }
 
-    private String fieldStyle() {
-        return "-fx-background-color: white;"
-            + "-fx-border-color: " + Config.C_BORDER + ";"
-            + "-fx-border-radius: 6;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 7;";
+    private void cargarDetalles() {
+        int row = ventasTable.getSelectedRow();
+        if (row < 0) { detModel.setRowCount(0); return; }
+        int ventaId = (int) ventasModel.getValueAt(row, 0);
+
+        List<DetalleVenta> detalles = ventaSvc.obtenerDetalles(ventaId);
+        detModel.setRowCount(0);
+        for (DetalleVenta d : detalles) {
+            Producto p = productoSvc.obtener(d.getProductoId());
+            String nombre = p != null ? p.getNombre() : "Producto #" + d.getProductoId();
+            detModel.addRow(new Object[]{
+                d.getId(), nombre, d.getCantidad(),
+                String.format("S/ %.2f", d.getPrecioUnitario()),
+                String.format("S/ %.2f", d.getSubtotal())
+            });
+        }
     }
 
-    private Button buildBtn(String text, String bg) {
-        Button btn = new Button(text);
-        btn.setStyle("-fx-background-color: " + bg + ";"
-            + "-fx-text-fill: white;"
-            + "-fx-background-radius: 6;"
-            + "-fx-padding: 8 16;"
-            + "-fx-font-weight: bold;"
-            + "-fx-cursor: hand;");
-        return btn;
+    private void anular() {
+        int row = ventasTable.getSelectedRow();
+        if (row < 0) { status("Seleccione una venta.", Config.C_WARNING); return; }
+        int ventaId = (int) ventasModel.getValueAt(row, 0);
+        String estado = (String) ventasModel.getValueAt(row, 6);
+        if ("Anulada".equals(estado)) { status("La venta ya esta anulada.", Config.C_WARNING); return; }
+
+        int ok = JOptionPane.showConfirmDialog(this,
+            "¿Anular venta #" + ventaId + "? Se restaurara el stock.",
+            "Confirmar anulacion", JOptionPane.YES_NO_OPTION, JOptionPane.WARNING_MESSAGE);
+        if (ok != JOptionPane.YES_OPTION) return;
+
+        if (ventaSvc.anularVenta(ventaId)) {
+            status("Venta #" + ventaId + " anulada.", Config.C_SUCCESS);
+            refresh();
+        } else {
+            status("No se pudo anular.", Config.C_ERROR);
+        }
+    }
+
+    private void status(String msg, Color color) {
+        statusLbl.setText(msg);
+        statusLbl.setForeground(color);
     }
 }
