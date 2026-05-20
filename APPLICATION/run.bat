@@ -2,7 +2,7 @@
 :: ============================================================
 :: MiniMarket POS — Ejecutar cliente Java (Swing / Java SE)
 :: Requiere: Java 17+, Maven 3.8+
-:: Ejecucion: run.bat (desde la carpeta APPLICATION-JAVA\)
+:: Ejecucion: run.bat (desde la carpeta APPLICATION\)
 :: ============================================================
 setlocal
 cd /d "%~dp0"

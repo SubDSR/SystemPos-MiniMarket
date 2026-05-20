@@ -24,7 +24,7 @@ public final class Config {
         if (home != null && !home.isBlank()) {
             BASE_DIR = Path.of(home).toAbsolutePath();
         } else {
-            // Ejecutar desde APPLICATION-JAVA/ → sube un nivel al raiz del proyecto
+            // Ejecutar desde APPLICATION/ → sube un nivel al raiz del proyecto
             BASE_DIR = Path.of(System.getProperty("user.dir"))
                            .toAbsolutePath()
                            .getParent();
@@ -37,8 +37,8 @@ public final class Config {
     public static final Path SERVIDOR_DIR = BASE_DIR.resolve("SERVIDOR");
 
     // Subdirectorios de APPLICATION
-    public static final Path LOGS_DIR    = BASE_DIR.resolve("APPLICATION-JAVA").resolve("logs");
-    public static final Path EXPORTS_DIR = BASE_DIR.resolve("APPLICATION-JAVA").resolve("exports");
+    public static final Path LOGS_DIR    = APP_DIR.resolve("logs");
+    public static final Path EXPORTS_DIR = APP_DIR.resolve("exports");
 
     // Subdirectorios del servidor
     public static final Path DB_DIR          = SERVIDOR_DIR.resolve("database");
