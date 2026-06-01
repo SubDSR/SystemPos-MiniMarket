@@ -1,333 +1,279 @@
-# Sistema POS MiniMarket — Arquitectura Monolítica con Acceso Directo
+# Sistema POS MiniMarket - Segundo Entregable
 
-> **Curso:** Arquitectura de Software
-> **Entregable:** 01 — Arquitectura Unitaria / Monolítica
-> **Empresa simulada:** MiniMarket El Ahorro S.A.C. — RUC 20123456789
-> **Tecnología:** Java 17 SE + Swing (sin frameworks, sin Maven en ejecución)
+Este proyecto implementa un Sistema POS para minimarket usando Java SE 17+ puro. La aplicacion fue evolucionada desde un primer entregable local hacia una arquitectura Cliente/Servidor real: los clientes ya no guardan datos en archivos locales, sino que se comunican por TCP/IP con un servidor de aplicaciones. Ese servidor concentra las reglas de negocio, valida las operaciones, controla el stock y guarda todo en una base SQLite centralizada.
 
----
+El proyecto tambien incorpora una parte analitica. A partir de la base transaccional `SERVIDOR_DATOS/minimarket.db`, se genera un Data Warehouse en `SERVIDOR_DWH/data/dwh.db`. Luego se construyen cubos OLAP binarios `.ctab` usando `RandomAccessFile` y calculo manual de offsets. Esto permite demostrar el paso desde una arquitectura transaccional Cliente/Servidor hacia un entorno analitico con DWH y procesamiento tipo cluster simulado por threads.
 
-## 1. Descripción General
+No se usan frameworks. No hay Spring Boot, Hibernate, REST, JSON, XML, Maven, Gradle, Hadoop ni Spark. La comunicacion entre cliente y servidor se hace con `java.net.Socket` y `java.net.ServerSocket`.
 
-Sistema de Punto de Venta (POS) para minimarket que demuestra los principios de
-la **arquitectura monolítica** en un entorno de sucursales distribuidas:
+## Estructura General
 
-- Cada sucursal trabaja **localmente y de forma completamente autónoma**.
-- Los datos se persisten en **archivos binarios de acceso directo** (`.dat` + `.idx`).
-- La sincronización al servidor se realiza copiando archivos CSV a una
-  **carpeta compartida de red** (ruta UNC: `\\HOSTNAME\DATOS`).
-- El servidor consolida los datos en una **base de datos SQLite centralizada**.
-- Todo el sistema es ejecutable con `java -jar` — sin dependencia de Maven en tiempo de ejecución.
+La carpeta `CLIENTE_POS` contiene el codigo fuente del cliente Swing. Este codigo solo sirve para compilar el JAR del cliente. Las carpetas `CLIENTE_01` y `CLIENTE_02` representan terminales de venta; estas carpetas no tienen codigo fuente ni base de datos, solo contienen `acceso_pos.bat`, que ejecuta el JAR publicado en `SERVIDOR_APLICACIONES/dist`.
 
----
+La carpeta `SERVIDOR_APLICACIONES` contiene el servidor TCP multihilo. Ahi viven `AppServer.java`, `ClientHandler.java`, los servicios de negocio y el `DatabaseManager`. La carpeta `SERVIDOR_DATOS` contiene la base operativa centralizada `minimarket.db`. Finalmente, `SERVIDOR_DWH` contiene el ecosistema analitico: ETL, configuracion del cluster, metadata de cubos, DWH SQLite y archivos `.ctab`.
 
-## 2. Arquitectura del Sistema
-
-```
-┌────────────────────────────────────────────────────────────────────┐
-│              ARQUITECTURA MONOLÍTICA — VISTA GENERAL               │
-├──────────────────────────┬─────────────────────────────────────────┤
-│   CLIENTE POS            │   SERVIDOR CENTRAL                       │
-│   APPLICATION/           │   SERVIDOR/                              │
-│                          │                                          │
-│  ┌──────────────────┐    │   ┌──────────────────────┐             │
-│  │  Interfaz Swing  │    │   │  ServerApp.java (GUI) │             │
-│  │  - Dashboard     │    │   │  - Monitor DATOS/     │             │
-│  │  - Productos     │    │   │  - Log de syncs       │             │
-│  │  - Clientes      │    │   └──────────┬───────────┘             │
-│  │  - Ventas        │    │              │                           │
-│  │  - Historial     │    │   ┌──────────▼───────────┐             │
-│  └──────────┬───────┘    │   │  SyncMonitor.java     │             │
-│             │            │   │  - Escanea DATOS/     │             │
-│  ┌──────────▼───────┐    │   │  - UPSERT SQLite      │             │
-│  │  Servicios CRUD  │    │   └──────────────────────┘             │
-│  │  ProductoService │    │                                          │
-│  │  ClienteService  │    │   ┌──────────────────────┐             │
-│  │  VentaService    │    │   │  minimarket.db         │             │
-│  └──────────┬───────┘    │   │  (SQLite consolidado) │             │
-│             │            │   └──────────────────────┘             │
-│  ┌──────────▼───────┐    │                                          │
-│  │  FileManager<T>  │    │              ▲                           │
-│  │  RandomAccessFile│    │              │                           │
-│  │  seek(offset)    │    │   ┌──────────┴───────────┐             │
-│  │  .dat + .idx     │    │   │  Update.jar           │             │
-│  └──────────┬───────┘    │   │  (autónomo)           │             │
-│             │            │   └──────────────────────┘             │
-│  ┌──────────▼───────┐    │              ▲                           │
-│  │  SyncAgent       │    │              │ CSV                       │
-│  │  Exporta CSV     │────┼──────────────┘                          │
-│  │  → DATOS/ (UNC)  │    │   ╔══════════════════════╗             │
-│  └──────────────────┘    │   ║  DATOS/               ║             │
-│             │            │   ║  (Carpeta compartida) ║             │
-│  ┌──────────▼───────┐    │   ╚══════════════════════╝             │
-│  │  Send.jar        │────┼──────────────►                          │
-│  │  (autónomo)      │    │                                          │
-│  └──────────────────┘    │                                          │
-└──────────────────────────┴─────────────────────────────────────────┘
-```
-
-### Flujo de Datos — Registros Binarios
-
-```
-ESCRITURA (INSERT):
-  Producto.toBytes() → byte[97]
-       │
-       ▼
-  FileManager.insert()
-       │
-       ├─ IndexManager.getFreeSlot() → offset reutilizado (.holes)
-       │  └─ O bien: offset = tamaño_actual(.dat) → append
-       │
-       ├─ RandomAccessFile.seek(offset)
-       ├─ RandomAccessFile.write(byte[97])
-       └─ IndexManager.add(id → offset) → persiste en .idx
-
-LECTURA (findById):
-  id → IndexManager.getOffset(id) → offset    O(1)
-     → RandomAccessFile.seek(offset)
-     → RandomAccessFile.readFully(byte[97])
-     → Producto.fromBytes(byte[97])            O(1) total
-
-ELIMINACIÓN LÓGICA:
-  record.setEstado(0)
-  RandomAccessFile.seek(offset)
-  RandomAccessFile.write(bytes_actualizados)   ← solo el flag cambia
-  IndexManager.remove(id) → offset va a .holes ← reutilizable
-```
-
----
-
-## 3. Estructura del Proyecto
-
-```
+```text
 SystemPos-MiniMarket/
-│
-├── APPLICATION/                     ← Cliente POS (Java SE + Swing)
-│   ├── src/main/java/com/minimarket/
-│   │   ├── MainApp.java             ← Punto de entrada POSClient.jar
-│   │   ├── models/
-│   │   │   ├── BinaryRecord.java    ← Interfaz de serialización binaria
-│   │   │   ├── Producto.java        ← 97  bytes fijos
-│   │   │   ├── Cliente.java         ← 131 bytes fijos
-│   │   │   ├── Venta.java           ← 52  bytes fijos
-│   │   │   └── DetalleVenta.java    ← 33  bytes fijos
-│   │   ├── services/
-│   │   │   ├── FileManager.java     ← CRUD con RandomAccessFile + seek()
-│   │   │   ├── IndexManager.java    ← TreeMap<id,offset> ↔ .idx binario
-│   │   │   ├── ProductoService.java
-│   │   │   ├── ClienteService.java
-│   │   │   └── VentaService.java
-│   │   ├── send/
-│   │   │   └── Send.java            ← Punto de entrada Send.jar
-│   │   ├── sync/
-│   │   │   └── SyncAgent.java       ← Exporta CSV → DATOS/ (UNC/fallback)
-│   │   ├── utils/
-│   │   │   ├── Config.java          ← Rutas centralizadas + UNC
-│   │   │   └── AppLogger.java       ← Logging diario a APPLICATION/logs/
-│   │   └── views/
-│   │       ├── MainWindow.java      ← Ventana principal (CardLayout)
-│   │       ├── DashboardView.java   ← KPIs + últimas ventas
-│   │       ├── ProductosView.java   ← CRUD productos
-│   │       ├── ClientesView.java    ← CRUD clientes
-│   │       ├── VentasView.java      ← POS interactivo con carrito
-│   │       ├── HistorialView.java   ← Historial con anulación
-│   │       └── SyncDialog.java      ← Diálogo de sincronización
-│   ├── build/                       ← Generado por build_client.bat
-│   │   ├── classes/
-│   │   └── tmp/
-│   ├── dist/                        ← Generado por build_client.bat
-│   │   ├── POSClient.jar
-│   │   └── Send.jar
-│   ├── logs/                        ← Logs diarios (pos_YYYY-MM-DD.log)
-│   ├── exports/                     ← CSVs de exportación temporal
-│   ├── run.bat                      ← Lanzador (java -jar POSClient.jar)
-│   └── run_send.bat                 ← Lanzador (java -jar Send.jar)
-│
-├── SERVIDOR/                        ← Servidor Central (Java SE + SQLite)
-│   ├── src/main/java/com/minimarket/server/
-│   │   ├── ServerApp.java           ← Punto de entrada Server.jar
-│   │   ├── database/
-│   │   │   └── DatabaseManager.java ← Gestor SQLite JDBC
-│   │   ├── sync/
-│   │   │   └── SyncMonitor.java     ← Monitor DATOS/ → UPSERT SQLite
-│   │   └── update/
-│   │       └── Update.java          ← Punto de entrada Update.jar
-│   ├── build/                       ← Generado por build_server.bat
-│   ├── dist/                        ← Generado por build_server.bat
-│   │   ├── Server.jar               ← Fat JAR (con sqlite-jdbc)
-│   │   └── Update.jar               ← Fat JAR (con sqlite-jdbc)
-│   ├── lib/                         ← sqlite-jdbc.jar (auto-descargado)
-│   ├── database/                    ← minimarket.db (SQLite)
-│   ├── logs/                        ← Logs del servidor
-│   ├── init_db.sql                  ← Esquema SQL (referencia/init manual)
-│   ├── run-servidor.bat             ← Lanzador (java -jar Server.jar)
-│   └── run_update.bat               ← Lanzador (java -jar Update.jar)
-│
-├── DATA/                            ← Archivos binarios locales del cliente
-│   ├── productos.dat / .idx / .holes
-│   ├── clientes.dat  / .idx / .holes
-│   ├── ventas.dat    / .idx / .holes
-│   └── detalles.dat  / .idx / .holes
-│
-├── DATOS/                           ← Carpeta compartida de sincronización
-│   │                                   (UNC: \\HOSTNAME\DATOS o fallback local)
-│   ├── productos_YYYYMMDD_HHMMSS.csv
-│   ├── clientes_YYYYMMDD_HHMMSS.csv
-│   ├── ventas_YYYYMMDD_HHMMSS.csv
-│   ├── detalles_YYYYMMDD_HHMMSS.csv
-│   └── MANIFEST_YYYYMMDD_HHMMSS.txt
-│
-├── build.bat            ← Alias de rebuild_all.bat
-├── build_client.bat     ← Compila CLIENT: POSClient.jar + Send.jar
-├── build_server.bat     ← Compila SERVER: Server.jar + Update.jar
-└── rebuild_all.bat      ← Rebuild completo del sistema
+|-- CLIENTE_POS/
+|-- CLIENTE_01/
+|-- CLIENTE_02/
+|-- SERVIDOR_APLICACIONES/
+|-- SERVIDOR_DATOS/
+|-- SERVIDOR_DWH/
+|-- build_all.bat
+|-- run_transaccional.bat
+`-- run_cluster_analytics.bat
 ```
 
----
+## Archivos .bat
 
-## 4. Compilación — Puro javac + jar
+`build_all.bat` compila todo el proyecto. Primero recopila los `.java` del cliente y los compila en `out/cliente`. Luego recopila los `.java` del servidor y los compila en `out/servidor` usando `lib/sqlite-jdbc.jar` en el classpath. Finalmente compila los programas del DWH en `out/dwh`. Al terminar empaqueta `POSClient.jar` y `Server.jar` dentro de `SERVIDOR_APLICACIONES/dist`.
 
-### Requisitos
-- **JDK 17+** (OpenJDK / Temurin recomendado)
-- **Conexión a internet** (solo primera vez, para descargar sqlite-jdbc)
-
-### Compilar todo (recomendado)
 ```bat
-rebuild_all.bat
+build_all.bat
 ```
 
-### Compilar solo cliente
+`run_transaccional.bat` inicia la parte operativa del sistema. Primero arranca `Server.jar`, que abre el puerto TCP `9090`. Despues espera unos segundos y ejecuta dos clientes POS. Esos clientes no guardan nada localmente; simplemente abren ventanas Swing y envian sus operaciones al servidor por sockets.
+
 ```bat
-build_client.bat
+run_transaccional.bat
 ```
-Genera: `APPLICATION\dist\POSClient.jar` + `APPLICATION\dist\Send.jar`
 
-### Compilar solo servidor
+`CLIENTE_01/acceso_pos.bat` y `CLIENTE_02/acceso_pos.bat` simulan accesos directos de red. Cada uno intenta ejecutar primero `\\%COMPUTERNAME%\APLICACIONES\POSClient.jar`. Si esa ruta compartida no existe, usa como respaldo `SERVIDOR_APLICACIONES\dist\POSClient.jar`. Esto representa el caso academico donde el cliente no instala la aplicacion, sino que ejecuta el JAR desde el servidor de aplicaciones.
+
 ```bat
-build_server.bat
+CLIENTE_01\acceso_pos.bat
+CLIENTE_02\acceso_pos.bat
 ```
-Genera: `SERVIDOR\dist\Server.jar` + `SERVIDOR\dist\Update.jar`
-> La primera vez descarga automáticamente `sqlite-jdbc-3.45.3.0.jar` desde Maven Central.
 
----
+`run_cluster_analytics.bat` ejecuta la parte analitica. Primero corre el ETL con `GenerarDatawareHouse`, luego construye los cubos con `CreateCrossTab`, y al final usa `ViewCrossTab` para imprimir en consola los cubos `ventas_2d.ctab` y `ventas_3d.ctab`.
 
-## 5. Ejecución
-
-### Cliente POS
 ```bat
-java -jar APPLICATION\dist\POSClient.jar
-REM  o directamente:
-APPLICATION\run.bat
+run_cluster_analytics.bat
 ```
 
-### Módulo Send (sincronización)
+## Flujo Transaccional
+
+Cuando se abre el POS, `MainApp` verifica que el servidor este vivo enviando un `PING` al AppServer. Si el servidor no responde, el cliente muestra un mensaje de error y no abre la ventana principal. Esto evita que el usuario trabaje en una pantalla que no podria guardar datos.
+
+Cuando el usuario entra a las ventanas de productos, clientes, ventas o historial, la interfaz Swing no accede a SQLite. Cada ventana usa servicios cliente como `ProductoService`, `ClienteService`, `VentaService` o `SucursalService`. Estos servicios son stubs: no contienen persistencia local, solo preparan una peticion de texto y la envian por `SocketClient`.
+
+El flujo de una operacion normal es el siguiente:
+
+```text
+Ventana Swing
+  -> Service del cliente
+  -> SocketClient
+  -> TCP/IP puerto 9090
+  -> AppServer
+  -> ClientHandler en un thread independiente
+  -> Service del servidor
+  -> DatabaseManager
+  -> SQLite centralizado
+  -> respuesta OK o ERROR
+```
+
+Por eso es normal que en la consola del servidor aparezcan varias peticiones aunque el usuario solo este navegando por ventanas. Por ejemplo, al abrir `Ventas`, el cliente puede pedir productos, clientes y sucursales. Cada consulta abre un socket, envia una linea, recibe respuesta y cierra el socket.
+
+## TCP/IP Y Sockets
+
+La comunicacion usa sockets TCP. El cliente abre una conexion nueva por cada operacion, envia una linea en UTF-8 y espera una sola linea de respuesta. Esta forma es simple, clara y suficiente para demostrar Cliente/Servidor sin introducir REST ni frameworks.
+
+En el cliente, `SocketClient.enviar(...)` crea un `Socket` contra el host y puerto configurados. Por defecto se conecta a `localhost:9090`. Usa `PrintWriter` para enviar la peticion y `BufferedReader` para leer la respuesta.
+
+```java
+try (Socket s = new Socket(Config.APP_SERVER_HOST, Config.APP_SERVER_PORT);
+     PrintWriter out = new PrintWriter(new OutputStreamWriter(s.getOutputStream(), StandardCharsets.UTF_8), true);
+     BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))) {
+    out.println(peticion);
+    return in.readLine();
+}
+```
+
+En el servidor, `AppServer` crea un `ServerSocket` en el puerto `9090`. Cada vez que llega una conexion, `accept()` devuelve un `Socket`. Ese socket se entrega a un `ClientHandler`, que corre en un thread independiente. Asi, varios clientes pueden consultar o registrar ventas al mismo tiempo.
+
+```java
+ServerSocket ss = new ServerSocket(ServerConfig.PORT);
+while (true) {
+    Socket c = ss.accept();
+    new Thread(new ClientHandler(c, db)).start();
+}
+```
+
+El servidor ahora registra logs mas descriptivos. En vez de mostrar solo `Cliente conectado`, cada linea indica la IP, el hilo, la operacion, la entidad, el resultado y el tiempo de ejecucion. Un ejemplo esperado es:
+
+```text
+2026-05-31 22:50:10 | INFO    | ClientHandler  | ip=127.0.0.1:53210 hilo=client-53210 op=LISTAR entidad=PRODUCTO estado=OK codigo=OK ms=8
+2026-05-31 22:50:15 | INFO    | ClientHandler  | ip=127.0.0.1:53211 hilo=client-53211 op=REGISTRAR entidad=VENTA estado=OK codigo=OK ms=31
+```
+
+Los logs tambien se guardan en archivo dentro de `SERVIDOR_APLICACIONES/logs`, con nombre diario como `server_2026-05-31.log`.
+
+## Protocolo De Red
+
+El protocolo es texto plano. Cada mensaje usa `|` como separador. No se permite que los campos contengan `|`, porque eso romperia el parseo de la peticion.
+
+Formato de peticion:
+
+```text
+OPERACION|ENTIDAD|campo1|campo2|...
+```
+
+Formato de respuesta exitosa:
+
+```text
+OK|mensaje
+OK|id_generado
+OK|dato1;dato2;dato3
+```
+
+Formato de respuesta con error:
+
+```text
+ERROR|codigo|mensaje
+```
+
+Algunas operaciones implementadas son `PING`, `LISTAR|PRODUCTO`, `LISTAR|CLIENTE`, `LISTAR|SUCURSAL`, `CREAR|PRODUCTO`, `CREAR|CLIENTE`, `REGISTRAR|VENTA`, `HISTORIAL|VENTA`, `DETALLES|VENTA` y `ANULAR|VENTA`.
+
+Una venta se registra con este formato:
+
+```text
+REGISTRAR|VENTA|clienteId|sucursalId|prodId:cantidad;prodId:cantidad
+```
+
+Por ejemplo:
+
+```text
+REGISTRAR|VENTA|1|2|3:1;5:2
+```
+
+Esa peticion significa que el cliente `1` registra una venta en la sucursal `2` con una unidad del producto `3` y dos unidades del producto `5`.
+
+## Guardado En SQLite
+
+El guardado ocurre solamente en el servidor. El cliente no tiene acceso a `minimarket.db`. Cuando una ventana necesita guardar un producto, cliente o venta, envia la peticion al AppServer. El AppServer valida el mensaje, llama al servicio correspondiente y finalmente `DatabaseManager` ejecuta SQL mediante JDBC.
+
+La base operativa esta en:
+
+```text
+SERVIDOR_DATOS\minimarket.db
+```
+
+Las tablas principales son `sucursales`, `productos`, `clientes`, `ventas` y `detalle_ventas`. Las sucursales base son Lima, Arequipa y Trujillo. En la ventana de ventas el usuario elige la sucursal, y ese valor se guarda en la columna `ventas.id_sucursal`.
+
+El caso mas importante es `registrarVenta`. Ese metodo esta marcado como `synchronized`, porque afecta stock y debe ser seguro si dos clientes venden al mismo tiempo. Internamente abre una transaccion JDBC. Primero valida que la sucursal exista, valida el cliente si corresponde, verifica que todos los productos existan y que haya stock suficiente. Despues inserta la cabecera en `ventas`, inserta las lineas en `detalle_ventas` y descuenta el stock en `productos`.
+
+Si todo sale bien, se hace `COMMIT` y el servidor responde `OK|idVenta`. Si algo falla, se hace `ROLLBACK` y el servidor responde `ERROR|TX|mensaje`. Esto evita ventas incompletas o descuentos de stock sin detalle asociado.
+
+## Seleccion De Sucursal
+
+La ventana `Ventas` tiene un selector de sucursal. La lista se obtiene desde el servidor con `LISTAR|SUCURSAL`, por lo que el cliente no tiene las sucursales codificadas localmente como base de datos. Las sucursales disponibles son:
+
+```text
+1 - Lima
+2 - Arequipa
+3 - Trujillo
+```
+
+Cuando se registra la venta, el ID seleccionado viaja como `sucursalId` dentro de `REGISTRAR|VENTA`. Luego se puede ver en `Dashboard` e `Historial` como `S#1`, `S#2` o `S#3`. Ese mismo campo es el que permite construir el cubo 3D por sucursal.
+
+## Data Warehouse
+
+El DWH se genera desde la base operativa. No se alimenta con CSV ni con sockets. El proceso `GenerarDatawareHouse` abre por JDBC `SERVIDOR_DATOS/minimarket.db`, lee las tablas operativas y crea una version analitica en `SERVIDOR_DWH/data/dwh.db`.
+
+El DWH usa un esquema estrella. Las dimensiones son `DIM_PRODUCTO`, `DIM_CLIENTE`, `DIM_TIEMPO` y `DIM_SUCURSAL`. La tabla central es `FACT_VENTAS`, donde cada fila representa una linea vendida con producto, cliente, tiempo, sucursal, cantidad, total vendido e IGV.
+
+Cuando se dice que los datos se suben al SQLite analitico, significa que el ETL copia y transforma datos desde el SQLite operativo hacia otro SQLite especializado para analisis. No se esta copiando el archivo completo. Se leen registros transaccionales y se insertan registros preparados para consultas analiticas.
+
+El comando equivalente del ETL es:
+
 ```bat
-java -jar APPLICATION\dist\Send.jar
-REM  Modo consola (sin GUI):
-java -jar APPLICATION\dist\Send.jar --headless
+"%JAVA_HOME%\bin\java.exe" -cp "out\dwh;lib\sqlite-jdbc.jar;lib\slf4j-api.jar;lib\slf4j-nop.jar" GenerarDatawareHouse SERVIDOR_DATOS\minimarket.db SERVIDOR_DWH\data\dwh.db
 ```
 
-### Servidor Central
+## Cubos .ctab
+
+Despues del ETL, `CreateCrossTab` lee `SERVIDOR_DWH/data/dwh.db`, `metadata.properties` y `Assign.txt`. La metadata indica que el cubo usa Producto como dimension 1, Mes como dimension 2 y Sucursal como dimension 3. `Assign.txt` simula la distribucion de trabajo entre nodos: cada linea asigna un conjunto de productos a un hostname o IP.
+
+El programa crea un thread por nodo definido en `Assign.txt`. Cada thread consulta `FACT_VENTAS`, acumula valores y escribe en archivos binarios `.ctab`. Los archivos generados son:
+
+```text
+SERVIDOR_DWH\repositorio_analitico\ventas_2d.ctab
+SERVIDOR_DWH\repositorio_analitico\ventas_3d.ctab
+```
+
+`ventas_2d.ctab` representa Producto x Mes. `ventas_3d.ctab` representa Producto x Mes x Sucursal. Cada celda del cubo es un `double`, por eso ocupa 8 bytes.
+
+La posicion de una celda no se busca por nombre. Se calcula matematicamente. Para el cubo 2D se usa:
+
+```java
+long offset2D = ((long)(i - 1) * N + (j - 1)) * W;
+```
+
+Para el cubo 3D se usa:
+
+```java
+long offset3D = ((long)(i1 - 1) * N * P + (i2 - 1) * P + (i3 - 1)) * W;
+```
+
+Luego se hace `raf.seek(offset)`, se lee el valor anterior y se escribe el acumulado. Este es el punto clave del almacenamiento OLAP binario: el archivo no se recorre completo para ubicar una celda, sino que se salta directamente a su posicion.
+
+## Como Ver Los .ctab
+
+Los archivos `.ctab` son binarios. No deben abrirse con Bloc de notas porque se veran como caracteres raros. Para visualizarlos se usa `ViewCrossTab`, que calcula los offsets, lee los `double` y los imprime como matriz en consola.
+
+En PowerShell, desde la raiz del proyecto:
+
+```powershell
+cd C:\Proyectos\SystemPos-MiniMarket
+& "$env:JAVA_HOME\bin\java.exe" -cp "out\dwh;lib\sqlite-jdbc.jar;lib\slf4j-api.jar;lib\slf4j-nop.jar" ViewCrossTab ventas_2d
+& "$env:JAVA_HOME\bin\java.exe" -cp "out\dwh;lib\sqlite-jdbc.jar;lib\slf4j-api.jar;lib\slf4j-nop.jar" ViewCrossTab ventas_3d
+```
+
+En CMD, desde la raiz del proyecto:
+
 ```bat
-java -jar SERVIDOR\dist\Server.jar
-REM  o directamente:
-SERVIDOR\run-servidor.bat
+cd /d C:\Proyectos\SystemPos-MiniMarket
+"%JAVA_HOME%\bin\java.exe" -cp "out\dwh;lib\sqlite-jdbc.jar;lib\slf4j-api.jar;lib\slf4j-nop.jar" ViewCrossTab ventas_2d
+"%JAVA_HOME%\bin\java.exe" -cp "out\dwh;lib\sqlite-jdbc.jar;lib\slf4j-api.jar;lib\slf4j-nop.jar" ViewCrossTab ventas_3d
 ```
 
-### Módulo Update (procesamiento autónomo)
+Tambien se puede ejecutar el flujo completo con:
+
 ```bat
-java -jar SERVIDOR\dist\Update.jar
-REM  Monitoreo continuo (sin GUI):
-java -jar SERVIDOR\dist\Update.jar --headless
-REM  Un scan y termina:
-java -jar SERVIDOR\dist\Update.jar --once
+run_cluster_analytics.bat
 ```
 
-### Variable de entorno (si hay problemas de rutas)
-```bat
-set MINIMARKET_HOME=C:\ProyectosUniversidad\SystemPos-MiniMarket
+El nombre correcto de los cubos es `.ctab`. Si se menciona `.cbat`, es un error de escritura.
+
+## Salida Esperada
+
+`ventas_2d` se imprime como una matriz de productos contra meses. Cada fila es un producto y cada columna es un mes. Si hay pocas ventas, la mayoria de celdas aparecera como `0.00`.
+
+```text
+Producto\Mes                 1         2         3 ...        12
+Producto_1                0.00      0.00      0.00 ...      5.66
+Producto_2                0.00      0.00      0.00 ...      4.96
 ```
 
----
+`ventas_3d` repite esa matriz por cada sucursal.
 
-## 6. Flujo de Sincronización
+```text
+Sucursal_1
+Producto\Mes                 1         2         3 ...        12
+Producto_1                0.00      0.00      0.00 ...      5.66
 
-```
-  ┌─────────┐         ┌──────────┐        ┌─────────────┐
-  │ Cliente │  Click  │ Send.jar │  Copia  │   DATOS/    │
-  │   POS   │────────►│(SyncAgent│────────►│  CSV files  │
-  └─────────┘ Sync    │ .java)   │   UNC   └──────┬──────┘
-      │               └──────────┘                │
-      │ .dat+.idx                                  │ 10s poll
-      │ (RandomAccess)                    ┌────────▼──────┐
-      │                                   │ SyncMonitor   │
-  ┌───▼──────┐                            │  .java        │
-  │  DATA/   │                            └────────┬──────┘
-  │ *.dat    │                                      │ UPSERT
-  │ *.idx    │                            ┌────────▼──────┐
-  │ *.holes  │                            │ minimarket.db │
-  └──────────┘                            │   (SQLite)    │
-                                          └───────────────┘
+Sucursal_2
+Producto\Mes                 1         2         3 ...        12
+Producto_1                0.00      0.00      0.00 ...      0.00
 ```
 
-**Pasos detallados:**
+## Uso Recomendado
 
-1. El cliente POS registra productos, clientes y ventas en archivos `.dat` locales.
-2. Al presionar **Sincronizar** (o ejecutar `Send.jar`):
-   - Se exportan 4 CSVs a `APPLICATION/exports/`
-   - Se copian al destino: `\\HOSTNAME\DATOS` (UNC) o `DATOS/` (fallback)
-   - Se crea un `MANIFEST_timestamp.txt` con metadatos
-3. El `SyncMonitor` del servidor escanea `DATOS/` cada 10 segundos.
-4. Por cada CSV nuevo: parseo → UPSERT transaccional en SQLite.
-5. El proceso se registra en `sync_log` y el archivo se marca en `processed_files.txt`.
+Primero compila todo con `build_all.bat`. Despues ejecuta `run_transaccional.bat` para abrir el servidor y los clientes. Desde el POS puedes crear productos, clientes y registrar ventas seleccionando una sucursal. Cuando ya existan ventas, ejecuta `run_cluster_analytics.bat` para generar el DWH y visualizar los cubos.
 
----
+Si el sistema muestra error de version Java, revisa que `JAVA_HOME` apunte a un JDK 17 o superior. En PowerShell puedes verificarlo con:
 
-## 7. Estructura de Registros Binarios
-
-| Entidad | Tamaño | Campos |
-|---------|--------|--------|
-| Producto | **97 bytes** | id(4) nombre(50) precio(8) stock(4) categoria(30) estado(1) |
-| Cliente | **131 bytes** | id(4) nombre(50) dni(11) telefono(15) email(50) estado(1) |
-| Venta | **52 bytes** | id(4) cliente_id(4) fecha(19) subtotal(8) igv(8) total(8) estado(1) |
-| DetalleVenta | **33 bytes** | id(4) venta_id(4) producto_id(4) cantidad(4) precio_unitario(8) subtotal(8) estado(1) |
-
-**Formato de índice `.idx`:**
+```powershell
+& "$env:JAVA_HOME\bin\java.exe" -version
 ```
-[4 bytes: count] [4 bytes: id][8 bytes: offset] × count
-```
-Ejemplo: id=101 → offset=0, id=102 → offset=97, id=103 → offset=194
-
----
-
-## 8. Conceptos Académicos Implementados
-
-| Concepto | Implementación | Clase/Archivo |
-|----------|----------------|---------------|
-| **Arquitectura Monolítica** | Todo el cliente en un JAR, todo el servidor en otro JAR | `POSClient.jar`, `Server.jar` |
-| **Procesamiento Autónomo** | Cliente funciona sin conexión permanente | `FileManager`, `Config` |
-| **Acceso Directo** | `seek(offset)` para O(1) sin escaneo | `FileManager.java` |
-| **Registros de Longitud Fija** | 97B, 131B, 52B, 33B exactos | Todos los modelos |
-| **Índices Físicos** | TreeMap<id,offset> ↔ archivo `.idx` binario | `IndexManager.java` |
-| **Eliminación Lógica** | Campo `estado` (1=activo, 0=eliminado) | `FileManager.delete()` |
-| **Reutilización de Slots** | Offsets liberados en archivo `.holes` | `IndexManager.java` |
-| **Compactación** | Reescribe `.dat` eliminando registros borrados | `FileManager.compact()` |
-| **Rutas UNC de Red** | `\\HOSTNAME\DATOS` con fallback local | `SyncAgent.java` |
-| **Sincronización por Archivos** | CSV → carpeta compartida → UPSERT SQLite | `Send.jar` → `Update.jar` |
-| **Base de Datos Solo en Servidor** | SQLite únicamente en `Server.jar`/`Update.jar` | `DatabaseManager.java` |
-| **Módulos Ejecutables** | 4 JARs independientes con `java -jar` | `build_*.bat` |
-
----
-
-## 9. Notas Técnicas
-
-- **SQLite JDBC**: Solo existe como dependencia del servidor. El cliente NO usa SQLite.
-- **Transacciones**: Los UPSERT del servidor son transaccionales con rollback en errores.
-- **Concurrencia**: SQLite usa WAL mode para permitir lecturas concurrentes.
-- **IGV**: La tasa de 18% se calcula en `VentaService` y se almacena en el registro.
-- **Fat JARs**: `Server.jar` y `Update.jar` incluyen internamente `sqlite-jdbc` para ser 100% portables.
-- **Logs**: El cliente genera `APPLICATION/logs/pos_YYYY-MM-DD.log` diario con rotación.
-
----
-
-*Generado para el curso de Arquitectura de Software — Entregable 01*
