@@ -28,11 +28,11 @@ target/
 Thumbs.db
 Desktop.ini
 
-# Logs and exports
-APPLICATION/logs/*.log
-APPLICATION-JAVA/logs/*.log
-SERVIDOR/logs/*.log
-APPLICATION/exports/*.csv
-DATOS/*.csv
-SERVIDOR/database/*.db
-SERVIDOR-JAVA/database/*.db
+# Logs, build outputs and generated data
+out/
+sources_*.txt
+CLIENTE_POS/logs/*
+SERVIDOR_APLICACIONES/logs/*
+SERVIDOR_DATOS/*.db
+SERVIDOR_DWH/data/*.db
+SERVIDOR_DWH/repositorio_analitico/*.ctab
