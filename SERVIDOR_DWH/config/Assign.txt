@@ -1,0 +1,13 @@
+# Assign.txt - ubicacion: SERVIDOR_DWH/config/Assign.txt
+# Formato: HOSTNAME_o_IP   indices_dim1_separados_por_coma
+
+DESKTOP-ABC   1,2,3
+192.168.1.11  4,5,6,7
+PC_LAB03      8,9,10
+LAPTOP-F29NI  11,12,13,14
+
+# Simulacion monopuesto (un equipo, N hilos logicos):
+# LAPTOP-F29NI  1,2,3
+# LAPTOP-F29NI  4,5,6,7
+# LAPTOP-F29NI  8,9,10
+# LAPTOP-F29NI  11,12,13,14
