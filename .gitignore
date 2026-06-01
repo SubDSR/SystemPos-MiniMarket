@@ -15,6 +15,7 @@ dist/
 target/
 *.class
 *.jar
+!lib/*.jar
 *.war
 *.ear
 .classpath
